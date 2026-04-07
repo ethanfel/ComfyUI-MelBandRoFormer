@@ -624,11 +624,12 @@ def _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=44100):
         fig = Figure(figsize=(14, 6), dpi=DPI, tight_layout=True)
         ax_a = fig.add_subplot(2, 1, 1)
         ax_b = fig.add_subplot(2, 1, 2)
-        _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
+        im_a = _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
         ax_a.set_title(label_a, fontsize=10)
         im = _draw_spec(ax_b, sb, vmin, vmax, CMAP, tpos, tlbl, xlabel=True)
         ax_b.set_title(label_b, fontsize=10)
-        fig.colorbar(im, ax=[ax_a, ax_b], label="dB", fraction=0.02, pad=0.01)
+        fig.colorbar(im_a, ax=ax_a, label="dB", fraction=0.02, pad=0.01)
+        fig.colorbar(im, ax=ax_b, label="dB", fraction=0.02, pad=0.01)
 
     elif mode == "difference":
         diff = sa - sb
@@ -652,11 +653,12 @@ def _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=44100):
         ax_a = fig.add_subplot(3, 1, 1)
         ax_b = fig.add_subplot(3, 1, 2)
         ax_d = fig.add_subplot(3, 1, 3)
-        _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
+        im_a = _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
         ax_a.set_title(label_a, fontsize=10)
         im_b = _draw_spec(ax_b, sb, vmin, vmax, CMAP, tpos, tlbl)
         ax_b.set_title(label_b, fontsize=10)
-        fig.colorbar(im_b, ax=[ax_a, ax_b], label="dB", fraction=0.015, pad=0.01)
+        fig.colorbar(im_a, ax=ax_a, label="dB", fraction=0.015, pad=0.01)
+        fig.colorbar(im_b, ax=ax_b, label="dB", fraction=0.015, pad=0.01)
         im_d = ax_d.imshow(diff, aspect="auto", cmap="RdBu_r", origin="upper",
                            vmin=-abs_max, vmax=abs_max, interpolation="antialiased")
         ax_d.set_yticks(tpos)
