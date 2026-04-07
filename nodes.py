@@ -181,6 +181,20 @@ def _save_ckpt_ack():
         f.write("acknowledged")
 
 
+# Basenames of every file managed by the registry.
+# Used to suppress local duplicates: if a model was downloaded via [HF],
+# its bare filename is hidden from the local list so it only appears once.
+_REGISTRY_FILENAMES = frozenset(
+    os.path.basename(filename) for _, filename in MODEL_REGISTRY.values()
+)
+
+
+def _manual_local_choices():
+    """Local files that are NOT part of the registry (manually dropped in by the user)."""
+    return [f for f in folder_paths.get_filename_list("MelBandRoFormer")
+            if os.path.basename(f) not in _REGISTRY_FILENAMES]
+
+
 def _hf_model_choices():
     return [_HF_PREFIX + name for name in MODEL_REGISTRY]
 
@@ -190,13 +204,11 @@ def _latest_hf_model_choices():
 
 
 def _all_model_choices():
-    local = folder_paths.get_filename_list("MelBandRoFormer")
-    return local + _hf_model_choices()
+    return _manual_local_choices() + _hf_model_choices()
 
 
 def _latest_model_choices():
-    local = folder_paths.get_filename_list("MelBandRoFormer")
-    return local + _latest_hf_model_choices()
+    return _manual_local_choices() + _latest_hf_model_choices()
 
 
 def _detect_model_type(sd):
