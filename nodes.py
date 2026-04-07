@@ -8,6 +8,12 @@ import folder_paths
 
 from .model.mel_band_roformer import MelBandRoformer
 
+try:
+    from bs_roformer import BSRoformer
+    _BS_ROFORMER_AVAILABLE = True
+except ImportError:
+    _BS_ROFORMER_AVAILABLE = False
+
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
 from comfy import model_management as mm
@@ -16,11 +22,31 @@ device = mm.get_torch_device()
 offload_device = mm.unet_offload_device()
 
 # ---------------------------------------------------------------------------
-# Base config — all variable fields are overridden by infer_model_config()
+# Base configs — variable fields are overridden by infer_* functions
 # ---------------------------------------------------------------------------
-_BASE_CONFIG = {
+_MELBAND_BASE_CONFIG = {
     "stereo": True,
     "num_bands": 60,
+    "dim_head": 64,
+    "heads": 8,
+    "attn_dropout": 0,
+    "ff_dropout": 0,
+    "flash_attn": True,
+    "dim_freqs_in": 1025,
+    "sample_rate": 44100,
+    "stft_n_fft": 2048,
+    "stft_hop_length": 441,
+    "stft_win_length": 2048,
+    "stft_normalized": False,
+    "mask_estimator_depth": 2,
+    "multi_stft_resolution_loss_weight": 1.0,
+    "multi_stft_resolutions_window_sizes": (4096, 2048, 1024, 512, 256),
+    "multi_stft_hop_size": 147,
+    "multi_stft_normalized": False,
+}
+
+_BS_BASE_CONFIG = {
+    "stereo": True,
     "dim_head": 64,
     "heads": 8,
     "attn_dropout": 0,
@@ -89,6 +115,12 @@ MODEL_REGISTRY = {
     # ── Aspiration (breath/mouth sounds) ────────────────────────────────────
     "Aspiration · Sucial ⭐":                        ("Sucial/Aspiration_Mel_Band_Roformer",              "aspiration_mel_band_roformer_sdr_18.9845.ckpt"),
     "Aspiration less-aggressive · Sucial":           ("Sucial/Aspiration_Mel_Band_Roformer",              "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"),
+    # ── BS-RoFormer: Vocals (better bass, competitive vocals) ────────────────
+    "[BS] Vocals revive v3e ⭐ · pcunwa":            ("pcunwa/BS-Roformer-Revive",                        "bs_roformer_revive3e.ckpt"),
+    "[BS] Vocals revive v2 · pcunwa":                ("pcunwa/BS-Roformer-Revive",                        "bs_roformer_revive2.ckpt"),
+    "[BS] Vocals revive v1 · pcunwa":                ("pcunwa/BS-Roformer-Revive",                        "bs_roformer_revive.ckpt"),
+    # ── BS-RoFormer: Dereverb ────────────────────────────────────────────────
+    "[BS] Dereverb · anvuew ⭐ (SDR 22.51)":         ("anvuew/deverb_bs_roformer",                        "dereverb_bs_roformer_anvuew_sdr_22.5050.ckpt"),
 }
 
 _HF_PREFIX = "[HF] "
@@ -103,44 +135,70 @@ def _all_model_choices():
     return local + _hf_model_choices()
 
 
-def infer_model_config(sd):
-    """Auto-detect architecture parameters from a state dict."""
-    config = dict(_BASE_CONFIG)
+def _detect_model_type(sd):
+    """Return 'melband' or 'bsroformer' by checking whether band-split is overlapping."""
+    band_weights = [v for k, v in sd.items()
+                    if k.startswith('band_split.to_features.') and k.endswith('.1.weight')]
+    if not band_weights:
+        return 'melband'  # safe fallback
+    total_input = sum(w.shape[1] for w in band_weights)
+    # BSRoformer: non-overlapping bands → total = 2 * audio_channels * dim_freqs_in
+    # For stereo+complex: 4 * 1025 = 4100
+    # MelBandRoformer: overlapping mel bands → total > 4100 (typically ~6000-8000)
+    return 'bsroformer' if total_input <= 4 * 1025 else 'melband'
 
-    # dim: output size of the first band-split projection
+
+def _infer_shared_params(sd, config):
+    """Fill dim, depth, num_stems, transformer depths, mask_estimator_depth — shared logic."""
     config["dim"] = sd["band_split.to_features.0.1.weight"].shape[0]
-
-    # depth: number of (time-transformer, freq-transformer) blocks
     config["depth"] = max(int(k.split('.')[1]) for k in sd if k.startswith('layers.')) + 1
-
-    # num_stems: number of mask estimators
     config["num_stems"] = max(int(k.split('.')[1]) for k in sd if k.startswith('mask_estimators.')) + 1
 
-    # time_transformer_depth: layers inside the time transformer
-    # key format: layers.<block>.0.layers.<depth_idx>.<attn_or_ff>.*
     time_keys = [k for k in sd if k.startswith('layers.0.0.layers.')]
-    if time_keys:
-        config["time_transformer_depth"] = max(int(k.split('.')[4]) for k in time_keys) + 1
-    else:
-        config["time_transformer_depth"] = 1
+    config["time_transformer_depth"] = max(int(k.split('.')[4]) for k in time_keys) + 1 if time_keys else 1
 
-    # freq_transformer_depth: layers inside the freq transformer
     freq_keys = [k for k in sd if k.startswith('layers.0.1.layers.')]
-    if freq_keys:
-        config["freq_transformer_depth"] = max(int(k.split('.')[4]) for k in freq_keys) + 1
-    else:
-        config["freq_transformer_depth"] = 1
+    config["freq_transformer_depth"] = max(int(k.split('.')[4]) for k in freq_keys) + 1 if freq_keys else 1
 
-    # mask_estimator_depth: number of hidden layers in the mask MLP
-    # key format: mask_estimators.0.to_freqs.0.0.<seq_idx>.weight
-    # Linear layers sit at even seq indices: 0, 2, 4, ...  → depth = max_even_idx // 2
     mlp_keys = [k for k in sd if k.startswith('mask_estimators.0.to_freqs.0.0.') and k.endswith('.weight')]
     if mlp_keys:
-        max_idx = max(int(k.split('.')[5]) for k in mlp_keys)
-        config["mask_estimator_depth"] = max_idx // 2
-    # else: keep _BASE_CONFIG default (2)
+        config["mask_estimator_depth"] = max(int(k.split('.')[5]) for k in mlp_keys) // 2
+
+
+def infer_melband_config(sd):
+    """Auto-detect MelBandRoformer architecture from state dict."""
+    config = dict(_MELBAND_BASE_CONFIG)
+    _infer_shared_params(sd, config)
+    return config
+
+
+def infer_bs_roformer_config(sd):
+    """Auto-detect BSRoformer architecture from state dict."""
+    config = dict(_BS_BASE_CONFIG)
+    _infer_shared_params(sd, config)
+
+    # Reconstruct freqs_per_bands from the band_split input layer shapes.
+    # Each band N: band_split.to_features.N.1.weight shape = [dim, 2 * freqs[N] * channels]
+    band_keys = sorted(
+        (int(k.split('.')[3]), k)
+        for k in sd
+        if k.startswith('band_split.to_features.') and k.endswith('.1.weight')
+    )
+    # Detect stereo: input divisible by 4 (2 complex × 2 ch) vs 2 (2 complex × 1 ch)
+    first_input = sd[band_keys[0][1]].shape[1]
+    divisor = 4 if first_input % 4 == 0 else 2
+    config["stereo"] = (divisor == 4)
+    config["freqs_per_bands"] = tuple(sd[k].shape[1] // divisor for _, k in band_keys)
 
     return config
+
+
+def infer_config(sd):
+    """Detect model type and return (model_type, config)."""
+    model_type = _detect_model_type(sd)
+    if model_type == 'bsroformer':
+        return 'bsroformer', infer_bs_roformer_config(sd)
+    return 'melband', infer_melband_config(sd)
 
 
 def download_hf_model(repo_id, filename):
@@ -206,12 +264,21 @@ class MelBandRoFormerModelLoader:
             model_path = folder_paths.get_full_path_or_raise("MelBandRoFormer", model_name)
 
         sd = load_torch_file(model_path)
-        config = infer_model_config(sd)
-        print(f"[MelBandRoFormer] Detected config: dim={config['dim']}, depth={config['depth']}, "
+        model_type, config = infer_config(sd)
+        print(f"[MelBandRoFormer] Detected {model_type}: dim={config['dim']}, depth={config['depth']}, "
               f"num_stems={config['num_stems']}, time_depth={config['time_transformer_depth']}, "
               f"freq_depth={config['freq_transformer_depth']}")
 
-        model = MelBandRoformer(**config).eval()
+        if model_type == 'bsroformer':
+            if not _BS_ROFORMER_AVAILABLE:
+                raise ImportError(
+                    "BS-RoFormer model requires the bs_roformer package. "
+                    "Install with:  pip install BS-RoFormer"
+                )
+            model = BSRoformer(**config).eval()
+        else:
+            model = MelBandRoformer(**config).eval()
+
         model.load_state_dict(sd, strict=True)
         return (model,)
 

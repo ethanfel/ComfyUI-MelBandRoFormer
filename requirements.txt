@@ -1,2 +1,4 @@
 rotary_embedding_torch
 einops
+huggingface_hub
+BS-RoFormer

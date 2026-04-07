@@ -3,7 +3,7 @@ name = "ComfyUI-MelBandRoFormer"
 description = "ComfyUI wrapper nodes for WanVideo"
 version = "1.0.2"
 license = {file = "LICENSE"}
-dependencies = ["rotary_embedding_torch", "einops"]
+dependencies = ["rotary_embedding_torch", "einops", "huggingface_hub", "BS-RoFormer"]
 
 [project.urls]
 Repository = "https://github.com/kijai/ComfyUI-MelBandRoFormer"
