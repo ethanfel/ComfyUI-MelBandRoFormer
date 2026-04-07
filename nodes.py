@@ -124,6 +124,16 @@ MODEL_REGISTRY = {
 }
 
 _HF_PREFIX = "[HF] "
+_ACK_FILE = os.path.join(folder_paths.get_folder_paths("MelBandRoFormer")[0], ".ckpt_risk_acknowledged")
+
+
+def _ckpt_acknowledged():
+    return os.path.exists(_ACK_FILE)
+
+
+def _save_ckpt_ack():
+    with open(_ACK_FILE, "w") as f:
+        f.write("acknowledged")
 
 
 def _hf_model_choices():
@@ -247,6 +257,17 @@ class MelBandRoFormerModelLoader:
                         ),
                     },
                 ),
+                "acknowledge_ckpt_risk": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": (
+                        "Most models use the .ckpt format, which is based on Python pickle. "
+                        "Pickle can execute arbitrary code when loaded — a malicious .ckpt file "
+                        "could run anything on your machine. All models in this registry come from "
+                        "known, trusted authors on HuggingFace, so the practical risk is low. "
+                        "Check this box to confirm you understand and accept this risk. "
+                        "Your acknowledgment is saved to disk and won't be asked again."
+                    ),
+                }),
             },
         }
 
@@ -255,10 +276,23 @@ class MelBandRoFormerModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "Mel-Band RoFormer"
 
-    def loadmodel(self, model_name):
+    def loadmodel(self, model_name, acknowledge_ckpt_risk=False):
         if model_name.startswith(_HF_PREFIX):
             display_name = model_name[len(_HF_PREFIX):]
             repo_id, filename = MODEL_REGISTRY[display_name]
+            if filename.endswith(".ckpt") and not _ckpt_acknowledged():
+                if not acknowledge_ckpt_risk:
+                    raise ValueError(
+                        "[MelBandRoFormer] This model uses the .ckpt format, which is based on Python pickle.\n"
+                        "Pickle files can execute arbitrary code when loaded — a malicious .ckpt could run "
+                        "anything on your machine.\n"
+                        "The models in this registry come from known, trusted authors on HuggingFace, "
+                        "so the practical risk is low, but you should be aware of it.\n\n"
+                        "To proceed: check the 'acknowledge_ckpt_risk' box on the Loader node and run again. "
+                        "Your acknowledgment will be saved and you won't be asked again."
+                    )
+                _save_ckpt_ack()
+                print("[MelBandRoFormer] .ckpt risk acknowledged and saved.")
             model_path = download_hf_model(repo_id, filename)
         else:
             model_path = folder_paths.get_full_path_or_raise("MelBandRoFormer", model_name)
