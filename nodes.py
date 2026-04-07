@@ -545,6 +545,7 @@ _LOG_FREQ_BINS = 256  # output rows after log-frequency resampling
 def _db_spectrogram(wav, n_fft, hop_length):
     """Compute dB-magnitude spectrogram [freq, time], floored at _DB_FLOOR below peak."""
     import numpy as np
+    hop_length = min(hop_length, n_fft)   # torch.stft requires hop_length <= n_fft
     window = torch.hann_window(n_fft)
     stft = torch.stft(wav, n_fft=n_fft, hop_length=hop_length,
                       window=window, return_complex=True)
