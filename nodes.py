@@ -123,7 +123,6 @@ MODEL_REGISTRY = {
     "[BS] Dereverb · anvuew ⭐ (SDR 22.51)":         ("anvuew/deverb_bs_roformer",                        "dereverb_bs_roformer_anvuew_sdr_22.5050.ckpt"),
 }
 
-_HF_PREFIX = "[HF] "
 _ACK_FILE = os.path.join(folder_paths.get_folder_paths("MelBandRoFormer")[0], ".ckpt_risk_acknowledged")
 
 # Latest/best model from each series — shown in the curated loader node.
@@ -214,11 +213,11 @@ def _manual_local_choices():
 
 
 def _hf_model_choices():
-    return [_HF_PREFIX + name for name in MODEL_REGISTRY]
+    return list(MODEL_REGISTRY.keys())
 
 
 def _latest_hf_model_choices():
-    return [_HF_PREFIX + name for name in MODEL_REGISTRY if name in _LATEST_MODEL_NAMES]
+    return [name for name in MODEL_REGISTRY if name in _LATEST_MODEL_NAMES]
 
 
 def _all_model_choices():
@@ -336,8 +335,7 @@ class MelBandRoFormerModelLoader:
                     {
                         "tooltip": (
                             "Local files from ComfyUI/models/MelBandRoFormer/ come first. "
-                            "Entries starting with '[HF]' are downloaded automatically from HuggingFace "
-                            "into that folder on first use."
+                            "Registry models are downloaded automatically from HuggingFace on first use."
                         ),
                     },
                 ),
@@ -361,9 +359,8 @@ class MelBandRoFormerModelLoader:
     CATEGORY = "Mel-Band RoFormer"
 
     def loadmodel(self, model_name, acknowledge_ckpt_risk=False):
-        if model_name.startswith(_HF_PREFIX):
-            display_name = model_name[len(_HF_PREFIX):]
-            repo_id, filename = MODEL_REGISTRY[display_name]
+        if model_name in MODEL_REGISTRY:
+            repo_id, filename = MODEL_REGISTRY[model_name]
             if filename.endswith(".ckpt") and not _ckpt_acknowledged():
                 if not acknowledge_ckpt_risk:
                     raise ValueError(
@@ -737,7 +734,7 @@ class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
                             "Curated list showing only the latest or best model from each series. "
                             "Older superseded versions are hidden. "
                             "Use the full Model Loader node to access every available model. "
-                            "Local files appear first; '[HF]' entries auto-download on first use."
+                            "Local files appear first; registry models auto-download on first use."
                         ),
                     },
                 ),
