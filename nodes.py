@@ -781,15 +781,128 @@ class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
     CATEGORY = "Mel-Band RoFormer"
 
 
+class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
+    """4-stem variant — outputs stem_1 through stem_4.
+
+    Connects to any model loader just like the regular sampler.
+    For models with fewer than 4 stems, extra outputs are silence.
+    """
+
+    RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "AUDIO")
+    RETURN_NAMES = ("stem_1", "stem_2", "stem_3", "stem_4")
+    FUNCTION = "process4"
+    CATEGORY = "Mel-Band RoFormer"
+
+    def process4(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1):
+        stems = self._process_all(model, audio, chunk_size, overlap, fade_size, batch_size)
+        sr = stems[0]["sample_rate"]
+        length = stems[0]["waveform"].shape[-1]
+        channels = stems[0]["waveform"].shape[1]
+
+        def _get(idx):
+            if idx < len(stems):
+                return stems[idx]
+            return {"waveform": torch.zeros(1, channels, length), "sample_rate": sr}
+
+        return (_get(0), _get(1), _get(2), _get(3))
+
+    def _process_all(self, model, audio, chunk_size, overlap, fade_size, batch_size):
+        """Run inference and return a list of all stem AUDIO dicts."""
+        audio_input = audio["waveform"]
+        sample_rate = audio["sample_rate"]
+
+        B, audio_channels, audio_length = audio_input.shape
+        sr = 44100
+
+        if audio_channels == 1:
+            audio_input = audio_input.repeat(1, 2, 1)
+            audio_channels = 2
+
+        if sample_rate != sr:
+            audio_input = TAF.resample(audio_input, orig_freq=sample_rate, new_freq=sr)
+
+        audio_input = original_audio = audio_input[0]
+        audio_length = audio_input.shape[1]
+
+        C = int(chunk_size * sr)
+        step = C // overlap
+        fade_samples = max(1, int(C * fade_size))
+        border = C - step
+
+        if audio_length > 2 * border and border > 0:
+            audio_input = F.pad(audio_input, (border, border), mode='reflect')
+
+        windowing_array = get_windowing_array(C, fade_samples, device)
+        audio_input = audio_input.to(device)
+        num_stems = len(model.mask_estimators)
+        total_length = audio_input.shape[1]
+        chunk_starts = list(range(0, total_length, step))
+        num_chunks = len(chunk_starts)
+
+        acc = torch.zeros(num_stems, *audio_input.shape, dtype=torch.float32, device=device)
+        cnt = torch.zeros(num_stems, *audio_input.shape, dtype=torch.float32, device=device)
+
+        model.to(device)
+        comfy_pbar = ProgressBar(num_chunks)
+
+        with torch.no_grad():
+            for b_start in tqdm(range(0, num_chunks, batch_size), desc="Processing chunks"):
+                batch_starts = chunk_starts[b_start:b_start + batch_size]
+                parts, lengths = [], []
+                for i in batch_starts:
+                    part = audio_input[:, i:i + C]
+                    length = part.shape[-1]
+                    lengths.append(length)
+                    if length < C:
+                        pad_mode = 'reflect' if length > C // 2 + 1 else 'constant'
+                        part = F.pad(part, (0, C - length), mode=pad_mode)
+                    parts.append(part)
+
+                batch_in = torch.stack(parts, dim=0)
+                batch_out = model(batch_in)
+                if num_stems == 1:
+                    batch_out = batch_out.unsqueeze(1)
+
+                for idx, (i, length) in enumerate(zip(batch_starts, lengths)):
+                    out = batch_out[idx]
+                    window = windowing_array.clone()
+                    if i == 0:
+                        window[:fade_samples] = 1
+                    if i + C >= total_length:
+                        window[-fade_samples:] = 1
+                    acc[..., i:i + length] += out[..., :length] * window[..., :length]
+                    cnt[..., i:i + length] += window[..., :length]
+
+                comfy_pbar.update(len(batch_starts))
+
+        model.to(offload_device)
+        estimated = acc / cnt.clamp(min=1e-8)
+
+        if audio_length > 2 * border and border > 0:
+            estimated = estimated[..., border:-border]
+
+        def to_audio(t):
+            return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
+
+        if num_stems == 1:
+            stem1 = estimated[0]
+            stem2 = original_audio.to(device) - stem1
+            return [to_audio(stem1), to_audio(stem2)]
+
+        return [to_audio(estimated[i]) for i in range(num_stems)]
+
+
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
     "MelBandRoFormerModelLoaderLatest": MelBandRoFormerModelLoaderLatest,
     "MelBandRoFormerSampler": MelBandRoFormerSampler,
+    "MelBandRoFormerSampler4Stem": MelBandRoFormerSampler4Stem,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
     "MelBandRoFormerModelLoaderLatest": "Mel-Band RoFormer Model Loader (Latest)",
     "MelBandRoFormerSampler": "Mel-Band RoFormer Sampler",
+    "MelBandRoFormerSampler4Stem": "Mel-Band RoFormer Sampler (4-stem)",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
 }
