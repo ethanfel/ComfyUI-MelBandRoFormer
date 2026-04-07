@@ -189,10 +189,28 @@ _REGISTRY_FILENAMES = frozenset(
 )
 
 
+_MODEL_EXTENSIONS = {".ckpt", ".safetensors", ".pt", ".pth"}
+
+
 def _manual_local_choices():
-    """Local files that are NOT part of the registry (manually dropped in by the user)."""
-    return [f for f in folder_paths.get_filename_list("MelBandRoFormer")
-            if os.path.basename(f) not in _REGISTRY_FILENAMES]
+    """Local model files not managed by the registry.
+
+    Filters out:
+    - Non-model files (.metadata, .json, .ckpt_risk_acknowledged, etc.)
+    - Hidden files / dotfiles
+    - Files whose basename matches a registry entry (already shown as [HF])
+    """
+    result = []
+    for f in folder_paths.get_filename_list("MelBandRoFormer"):
+        base = os.path.basename(f)
+        if base.startswith("."):
+            continue
+        if os.path.splitext(base)[1].lower() not in _MODEL_EXTENSIONS:
+            continue
+        if base in _REGISTRY_FILENAMES:
+            continue
+        result.append(f)
+    return result
 
 
 def _hf_model_choices():
