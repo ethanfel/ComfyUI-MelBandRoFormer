@@ -538,7 +538,8 @@ def _audio_to_mono(audio):
     return wav, sr
 
 
-_DB_FLOOR = -80.0   # dB floor — frequencies below this are clipped to black
+_DB_FLOOR = -80.0     # dB floor — bins below this relative to peak are black
+_LOG_FREQ_BINS = 256  # output rows after log-frequency resampling
 
 
 def _db_spectrogram(wav, n_fft, hop_length):
@@ -553,39 +554,52 @@ def _db_spectrogram(wav, n_fft, hop_length):
     return db.astype(np.float32)
 
 
-def _spec_vrange(spec, percentile_lo=2.0):
-    """Return (vmin, vmax) using percentile clipping for contrast."""
+def _to_log_freq(spec, n_out=_LOG_FREQ_BINS):
+    """Resample linear-frequency spectrogram to log-spaced frequency bins."""
     import numpy as np
-    vmax = float(np.percentile(spec, 99.5))
-    vmin = float(np.percentile(spec, percentile_lo))
-    return vmin, vmax
+    n_freqs, n_t = spec.shape
+    # Log-spaced source indices from bin 1 (avoid DC) to n_freqs-1
+    src_idx = np.logspace(0, np.log10(max(n_freqs - 1, 2)), n_out)
+    lo = np.floor(src_idx).astype(int).clip(0, n_freqs - 2)
+    hi = lo + 1
+    frac = (src_idx - lo)[:, None]                          # [n_out, 1]
+    return ((1 - frac) * spec[lo] + frac * spec[hi]).astype(np.float32)
 
 
-def _freq_yticks(n_fft, n_freqs, sr=44100):
-    """Return (tick_positions, tick_labels) for Hz axis after vertical flip."""
+def _log_freq_yticks(n_fft, n_out=_LOG_FREQ_BINS, sr=44100):
+    """Tick positions/labels for a log-freq resampled, vertically-flipped spectrogram."""
+    import numpy as np
+    n_freqs = n_fft // 2 + 1
+    src_idx = np.logspace(0, np.log10(max(n_freqs - 1, 2)), n_out)
     target_hz = [100, 500, 1000, 2000, 4000, 8000, 16000]
     positions, labels = [], []
     for hz in target_hz:
-        idx = int(hz * n_fft / sr)
-        if idx < n_freqs:
-            positions.append(n_freqs - 1 - idx)   # after [::-1] flip
-            labels.append(f"{hz // 1000}k" if hz >= 1000 else str(hz))
+        bin_f = hz * n_fft / sr
+        if bin_f < 1 or bin_f >= n_freqs:
+            continue
+        pos = int(np.searchsorted(src_idx, bin_f))
+        pos = min(pos, n_out - 1)
+        positions.append(n_out - 1 - pos)   # after [::-1] flip
+        labels.append(f"{hz // 1000}k" if hz >= 1000 else str(hz))
     return positions, labels
 
 
-def _style_spec_ax(ax, spec, n_fft, cmap, xlabel=False, sr=44100):
-    """Draw spectrogram on ax with proper dB range, Hz ticks, colorbar."""
-    vmin, vmax = _spec_vrange(spec)
+def _shared_vrange(*specs, percentile_lo=2.0):
+    """Compute vmin/vmax across all specs for a shared color scale."""
+    import numpy as np
+    combined = np.concatenate([s.ravel() for s in specs])
+    return float(np.percentile(combined, percentile_lo)), float(np.percentile(combined, 99.5))
+
+
+def _draw_spec(ax, spec, vmin, vmax, cmap, tpos, tlbl, xlabel=False):
     im = ax.imshow(spec, aspect="auto", cmap=cmap, origin="upper",
                    vmin=vmin, vmax=vmax, interpolation="antialiased")
-    n_freqs = spec.shape[0]
-    tpos, tlbl = _freq_yticks(n_fft, n_freqs, sr)
     ax.set_yticks(tpos)
     ax.set_yticklabels(tlbl, fontsize=8)
     ax.set_ylabel("Hz", fontsize=9)
+    ax.tick_params(axis="x", labelsize=8)
     if xlabel:
         ax.set_xlabel("Time frames", fontsize=9)
-    ax.tick_params(axis="x", labelsize=8)
     return im
 
 
@@ -596,19 +610,23 @@ def _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=44100):
     from matplotlib.backends.backend_agg import FigureCanvasAgg
 
     min_t = min(spec_a.shape[1], spec_b.shape[1])
-    sa = spec_a[::-1, :min_t]
-    sb = spec_b[::-1, :min_t]
 
+    # Resample to log-frequency and flip so low Hz is at bottom
+    sa = _to_log_freq(spec_a[:, :min_t])[::-1]
+    sb = _to_log_freq(spec_b[:, :min_t])[::-1]
+
+    tpos, tlbl = _log_freq_yticks(n_fft, sr=sr)
     CMAP = "inferno"
     DPI = 150
 
     if mode == "stacked":
+        vmin, vmax = _shared_vrange(sa, sb)
         fig = Figure(figsize=(14, 6), dpi=DPI, tight_layout=True)
         ax_a = fig.add_subplot(2, 1, 1)
         ax_b = fig.add_subplot(2, 1, 2)
-        _style_spec_ax(ax_a, sa, n_fft, CMAP, sr=sr)
+        _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
         ax_a.set_title(label_a, fontsize=10)
-        im = _style_spec_ax(ax_b, sb, n_fft, CMAP, xlabel=True, sr=sr)
+        im = _draw_spec(ax_b, sb, vmin, vmax, CMAP, tpos, tlbl, xlabel=True)
         ax_b.set_title(label_b, fontsize=10)
         fig.colorbar(im, ax=[ax_a, ax_b], label="dB", fraction=0.02, pad=0.01)
 
@@ -617,37 +635,34 @@ def _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=44100):
         abs_max = float(np.percentile(np.abs(diff), 99.5)) + 1e-8
         fig = Figure(figsize=(14, 4), dpi=DPI, tight_layout=True)
         ax = fig.add_subplot(1, 1, 1)
-        n_freqs = sa.shape[0]
-        tpos, tlbl = _freq_yticks(n_fft, n_freqs, sr)
+        im = ax.imshow(diff, aspect="auto", cmap="RdBu_r", origin="upper",
+                       vmin=-abs_max, vmax=abs_max, interpolation="antialiased")
         ax.set_yticks(tpos)
         ax.set_yticklabels(tlbl, fontsize=8)
         ax.set_ylabel("Hz", fontsize=9)
         ax.set_xlabel("Time frames", fontsize=9)
-        im = ax.imshow(diff, aspect="auto", cmap="RdBu_r", origin="upper",
-                       vmin=-abs_max, vmax=abs_max, interpolation="antialiased")
         ax.set_title(f"[{label_a}] − [{label_b}]  ·  red = A louder  ·  blue = B louder", fontsize=10)
         fig.colorbar(im, ax=ax, label="ΔdB", fraction=0.02, pad=0.01)
 
     else:  # stacked + difference
+        vmin, vmax = _shared_vrange(sa, sb)
         diff = sa - sb
         abs_max = float(np.percentile(np.abs(diff), 99.5)) + 1e-8
         fig = Figure(figsize=(14, 9), dpi=DPI, tight_layout=True)
         ax_a = fig.add_subplot(3, 1, 1)
         ax_b = fig.add_subplot(3, 1, 2)
         ax_d = fig.add_subplot(3, 1, 3)
-        _style_spec_ax(ax_a, sa, n_fft, CMAP, sr=sr)
+        _draw_spec(ax_a, sa, vmin, vmax, CMAP, tpos, tlbl)
         ax_a.set_title(label_a, fontsize=10)
-        im_b = _style_spec_ax(ax_b, sb, n_fft, CMAP, sr=sr)
+        im_b = _draw_spec(ax_b, sb, vmin, vmax, CMAP, tpos, tlbl)
         ax_b.set_title(label_b, fontsize=10)
         fig.colorbar(im_b, ax=[ax_a, ax_b], label="dB", fraction=0.015, pad=0.01)
-        n_freqs = sa.shape[0]
-        tpos, tlbl = _freq_yticks(n_fft, n_freqs, sr)
+        im_d = ax_d.imshow(diff, aspect="auto", cmap="RdBu_r", origin="upper",
+                           vmin=-abs_max, vmax=abs_max, interpolation="antialiased")
         ax_d.set_yticks(tpos)
         ax_d.set_yticklabels(tlbl, fontsize=8)
         ax_d.set_ylabel("Hz", fontsize=9)
         ax_d.set_xlabel("Time frames", fontsize=9)
-        im_d = ax_d.imshow(diff, aspect="auto", cmap="RdBu_r", origin="upper",
-                           vmin=-abs_max, vmax=abs_max, interpolation="antialiased")
         ax_d.set_title(f"[{label_a}] − [{label_b}]", fontsize=10)
         fig.colorbar(im_d, ax=ax_d, label="ΔdB", fraction=0.015, pad=0.01)
 
