@@ -53,17 +53,31 @@ To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file 
 
 ## Nodes
 
-### Mel-Band RoFormer Model Loader
+### Mel-Band RoFormer Model Loader (Latest)
 
-Loads a model from your local folder or downloads it automatically from HuggingFace.
+Curated loader showing only the latest or best model from each series. Superseded versions are hidden. **Recommended starting point.**
 
 | Input | Description |
 |---|---|
-| `model_name` | Local filenames appear first. `[HF] …` entries auto-download on first use. |
+| `model_name` | Local files first, then curated `[HF]` entries. One winner per model family. |
+| `acknowledge_ckpt_risk` | Must be checked once before downloading `.ckpt` models. See [Security note](#security-note) below. |
 
-**Output:** a `MELROFORMERMODEL` — connect it to the Sampler node.
+---
 
-The loader automatically detects whether the checkpoint is a **Mel-Band RoFormer** or **BS-RoFormer** model and instantiates the correct architecture. No configuration needed.
+### Mel-Band RoFormer Model Loader
+
+Full loader — every model in the registry, including older versions. Use this when you need a specific older checkpoint or want to compare versions.
+
+| Input | Description |
+|---|---|
+| `model_name` | Local files first, then all `[HF]` entries. |
+| `acknowledge_ckpt_risk` | Must be checked once before downloading `.ckpt` models. |
+
+Both loaders automatically detect whether the checkpoint is **Mel-Band RoFormer** or **BS-RoFormer** and instantiate the correct architecture. No configuration needed. **Output:** `MELROFORMERMODEL` — connect to the Sampler.
+
+#### Security note
+
+Most models use the `.ckpt` format, which is based on Python pickle. Pickle can execute arbitrary code when a file is loaded. All models in this registry come from known, trusted authors on HuggingFace, so the practical risk is low — but you should be aware of it. Check `acknowledge_ckpt_risk` to confirm you understand. Your acknowledgment is saved to disk and will not be asked again.
 
 ---
 
@@ -73,7 +87,7 @@ Runs the separation and returns two audio streams.
 
 | Input | Default | Description |
 |---|---|---|
-| `model` | — | Connect from the Loader node. |
+| `model` | — | Connect from either Loader node. |
 | `audio` | — | Any ComfyUI `AUDIO` input. |
 | `chunk_size` | 8.0 s | Audio is processed in overlapping chunks. Larger = better quality on long sustained sounds, but more VRAM. Reduce if you get out-of-memory errors. |
 | `overlap` | 2 | How many chunks overlap. Higher = smoother crossfades between chunks, but slower. 2 is fine for most use cases; try 4 for very clean results. |
@@ -86,6 +100,30 @@ Runs the separation and returns two audio streams.
 | `stem_2` | The residual (original minus stem_1) for single-stem models, or the second stem for two-stem models (karaoke, aspiration). |
 
 > **4-stem models:** Only `stem_1` (vocals) and `stem_2` (drums) are output. Stems 3 and 4 (bass, other) are discarded with a console warning.
+
+---
+
+### Mel-Band RoFormer Spectrogram
+
+Visualizes and compares two audio streams as log-magnitude spectrograms. Connect the original audio and a separated stem to compare before/after side by side.
+
+| Input | Default | Description |
+|---|---|---|
+| `audio_a` | — | First audio stream (e.g. original). |
+| `audio_b` | — | Second audio stream (e.g. separated stem). |
+| `label_a` | `"A"` | Label shown on the first spectrogram panel. |
+| `label_b` | `"B"` | Label shown on the second spectrogram panel. |
+| `mode` | `stacked` | See modes below. |
+| `n_fft` | 2048 | FFT size. Larger = better frequency resolution, lower time resolution. |
+| `hop_length` | 512 | Hop size in samples. Smaller = better time resolution. |
+
+| Mode | Description |
+|---|---|
+| `stacked` | A on top, B below — same color scale for direct comparison. |
+| `difference` | Single panel showing A − B with a diverging colormap. Red = frequencies louder in A, blue = louder in B, white = identical. |
+| `stacked + difference` | All three panels: A, B, and the difference. |
+
+**Output:** `IMAGE` — plug directly into a Preview Image node.
 
 ---
 
