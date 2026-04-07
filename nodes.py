@@ -15,6 +15,131 @@ from comfy.utils import load_torch_file, ProgressBar
 device = mm.get_torch_device()
 offload_device = mm.unet_offload_device()
 
+# ---------------------------------------------------------------------------
+# Base config — all variable fields are overridden by infer_model_config()
+# ---------------------------------------------------------------------------
+_BASE_CONFIG = {
+    "stereo": True,
+    "num_bands": 60,
+    "dim_head": 64,
+    "heads": 8,
+    "attn_dropout": 0,
+    "ff_dropout": 0,
+    "flash_attn": True,
+    "dim_freqs_in": 1025,
+    "sample_rate": 44100,
+    "stft_n_fft": 2048,
+    "stft_hop_length": 441,
+    "stft_win_length": 2048,
+    "stft_normalized": False,
+    "mask_estimator_depth": 2,
+    "multi_stft_resolution_loss_weight": 1.0,
+    "multi_stft_resolutions_window_sizes": (4096, 2048, 1024, 512, 256),
+    "multi_stft_hop_size": 147,
+    "multi_stft_normalized": False,
+}
+
+# ---------------------------------------------------------------------------
+# HuggingFace model registry  (display_name -> (repo_id, filename))
+# ---------------------------------------------------------------------------
+MODEL_REGISTRY = {
+    # ── Vocals ──────────────────────────────────────────────────────────────
+    "Vocals · Kim fp16 ⭐ [Kijai]":          ("Kijai/MelBandRoFormer_comfy",                           "MelBandRoformer_fp16.safetensors"),
+    "Vocals · Kim fp32 [Kijai]":             ("Kijai/MelBandRoFormer_comfy",                           "MelBandRoformer_fp32.safetensors"),
+    "Vocals · Kim original [KimberleyJSN]":  ("KimberleyJSN/melbandroformer",                          "MelBandRoformer.ckpt"),
+    "Vocals · becruily":                     ("becruily/mel-band-roformer-vocals",                     "mel_band_roformer_vocals_becruily.ckpt"),
+    "Vocals small · pcunwa":                 ("pcunwa/Mel-Band-Roformer-small",                        "melband_roformer_small_v1.ckpt"),
+    # ── Instrumental ────────────────────────────────────────────────────────
+    "Instrumental · becruily":               ("becruily/mel-band-roformer-instrumental",               "mel_band_roformer_instrumental_becruily.ckpt"),
+    # ── Karaoke (lead-vocal removal) ────────────────────────────────────────
+    "Karaoke · aufr33/viperx ⭐":            ("jarredou/aufr33-viperx-karaoke-melroformer-model",      "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"),
+    "Karaoke · becruily (2-stem)":           ("becruily/mel-band-roformer-karaoke",                   "mel_band_roformer_karaoke_becruily.ckpt"),
+    # ── Vocals + Instrumental 2-stem ────────────────────────────────────────
+    "Vocals+Instrumental 2-stem · becruily": ("becruily/mel-band-roformer-deux",                      "becruily_deux.ckpt"),
+    # ── Dereverb / Echo removal ─────────────────────────────────────────────
+    "Dereverb+Echo v2 · Sucial ⭐":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb_echo_mbr_v2_sdr_dry_13.4843.ckpt"),
+    "Dereverb+Echo fused · Sucial":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb_echo_mbr_fused_0.5_v2_0.25_big_0.25_super.ckpt"),
+    "Dereverb big reverb · Sucial":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "de_big_reverb_mbr_ep_362.ckpt"),
+    "Dereverb super-big reverb · Sucial":    ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "de_super_big_reverb_mbr_ep_346.ckpt"),
+    "Dereverb+Echo v1 · Sucial":             ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb-echo_mel_band_roformer_sdr_10.0169.ckpt"),
+    # ── Denoise ─────────────────────────────────────────────────────────────
+    "Denoise · aufr33 ⭐":                   ("poiqazwsx/melband-roformer-denoise",                   "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"),
+    "Denoise aggressive · aufr33":           ("poiqazwsx/melband-roformer-denoise",                   "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"),
+    # ── Aspiration (breath/mouth sounds) ────────────────────────────────────
+    "Aspiration · Sucial ⭐":                ("Sucial/Aspiration_Mel_Band_Roformer",                   "aspiration_mel_band_roformer_sdr_18.9845.ckpt"),
+    "Aspiration less-aggressive · Sucial":   ("Sucial/Aspiration_Mel_Band_Roformer",                   "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"),
+}
+
+_HF_PREFIX = "[HF] "
+
+
+def _hf_model_choices():
+    return [_HF_PREFIX + name for name in MODEL_REGISTRY]
+
+
+def _all_model_choices():
+    local = folder_paths.get_filename_list("MelBandRoFormer")
+    return local + _hf_model_choices()
+
+
+def infer_model_config(sd):
+    """Auto-detect architecture parameters from a state dict."""
+    config = dict(_BASE_CONFIG)
+
+    # dim: output size of the first band-split projection
+    config["dim"] = sd["band_split.to_features.0.1.weight"].shape[0]
+
+    # depth: number of (time-transformer, freq-transformer) blocks
+    config["depth"] = max(int(k.split('.')[1]) for k in sd if k.startswith('layers.')) + 1
+
+    # num_stems: number of mask estimators
+    config["num_stems"] = max(int(k.split('.')[1]) for k in sd if k.startswith('mask_estimators.')) + 1
+
+    # time_transformer_depth: layers inside the time transformer
+    # key format: layers.<block>.0.layers.<depth_idx>.<attn_or_ff>.*
+    time_keys = [k for k in sd if k.startswith('layers.0.0.layers.')]
+    if time_keys:
+        config["time_transformer_depth"] = max(int(k.split('.')[4]) for k in time_keys) + 1
+    else:
+        config["time_transformer_depth"] = 1
+
+    # freq_transformer_depth: layers inside the freq transformer
+    freq_keys = [k for k in sd if k.startswith('layers.0.1.layers.')]
+    if freq_keys:
+        config["freq_transformer_depth"] = max(int(k.split('.')[4]) for k in freq_keys) + 1
+    else:
+        config["freq_transformer_depth"] = 1
+
+    # mask_estimator_depth: number of hidden layers in the mask MLP
+    # key format: mask_estimators.0.to_freqs.0.0.<seq_idx>.weight
+    # Linear layers sit at even seq indices: 0, 2, 4, ...  → depth = max_even_idx // 2
+    mlp_keys = [k for k in sd if k.startswith('mask_estimators.0.to_freqs.0.0.') and k.endswith('.weight')]
+    if mlp_keys:
+        max_idx = max(int(k.split('.')[5]) for k in mlp_keys)
+        config["mask_estimator_depth"] = max_idx // 2
+    # else: keep _BASE_CONFIG default (2)
+
+    return config
+
+
+def download_hf_model(repo_id, filename):
+    """Download a model from HuggingFace into ComfyUI's diffusion_models folder."""
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        raise ImportError(
+            "huggingface_hub is required for auto-download. "
+            "Install with:  pip install huggingface_hub"
+        )
+    save_dir = folder_paths.get_folder_paths("MelBandRoFormer")[0]
+    save_path = os.path.join(save_dir, filename)
+    if not os.path.exists(save_path):
+        print(f"[MelBandRoFormer] Downloading {filename} from {repo_id} ...")
+        hf_hub_download(repo_id=repo_id, filename=filename, local_dir=save_dir)
+        print(f"[MelBandRoFormer] Saved to {save_path}")
+    return save_path
+
+
 def get_windowing_array(window_size, fade_size, device):
     fadein = torch.linspace(0, 1, fade_size)
     fadeout = torch.linspace(1, 0, fade_size)
@@ -23,51 +148,52 @@ def get_windowing_array(window_size, fade_size, device):
     window[:fade_size] *= fadein
     return window.to(device)
 
+
+# ---------------------------------------------------------------------------
+# Nodes
+# ---------------------------------------------------------------------------
+
 class MelBandRoFormerModelLoader:
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "model_name": (folder_paths.get_filename_list("diffusion_models"), {"tooltip": "These models are loaded from the 'ComfyUI/models/diffusion_models' -folder",}),
+                "model_name": (
+                    _all_model_choices(),
+                    {
+                        "tooltip": (
+                            "Local files from ComfyUI/models/MelBandRoFormer/ come first. "
+                            "Entries starting with '[HF]' are downloaded automatically from HuggingFace "
+                            "into that folder on first use."
+                        ),
+                    },
+                ),
             },
         }
 
     RETURN_TYPES = ("MELROFORMERMODEL",)
-    RETURN_NAMES = ("model", )
+    RETURN_NAMES = ("model",)
     FUNCTION = "loadmodel"
     CATEGORY = "Mel-Band RoFormer"
 
     def loadmodel(self, model_name):
-        model_config = {
-                "dim": 384,
-                "depth": 6,
-                "stereo": True,
-                "num_stems": 1,
-                "time_transformer_depth": 1,
-                "freq_transformer_depth": 1,
-                "num_bands": 60,
-                "dim_head": 64,
-                "heads": 8,
-                "attn_dropout": 0,
-                "ff_dropout": 0,
-                "flash_attn": True,
-                "dim_freqs_in": 1025,
-                "sample_rate": 44100,  # needed for mel filter bank from librosa
-                "stft_n_fft": 2048,
-                "stft_hop_length": 441,
-                "stft_win_length": 2048,
-                "stft_normalized": False,
-                "mask_estimator_depth": 2,
-                "multi_stft_resolution_loss_weight": 1.0,
-                "multi_stft_resolutions_window_sizes": (4096, 2048, 1024, 512, 256),
-                "multi_stft_hop_size": 147,
-                "multi_stft_normalized": False,
-        }
-        model = MelBandRoformer(**model_config).eval()
-        model_path = folder_paths.get_full_path_or_raise("diffusion_models", model_name)
-        model.load_state_dict(load_torch_file(model_path), strict=True)
+        if model_name.startswith(_HF_PREFIX):
+            display_name = model_name[len(_HF_PREFIX):]
+            repo_id, filename = MODEL_REGISTRY[display_name]
+            model_path = download_hf_model(repo_id, filename)
+        else:
+            model_path = folder_paths.get_full_path_or_raise("MelBandRoFormer", model_name)
 
+        sd = load_torch_file(model_path)
+        config = infer_model_config(sd)
+        print(f"[MelBandRoFormer] Detected config: dim={config['dim']}, depth={config['depth']}, "
+              f"num_stems={config['num_stems']}, time_depth={config['time_transformer_depth']}, "
+              f"freq_depth={config['freq_transformer_depth']}")
+
+        model = MelBandRoformer(**config).eval()
+        model.load_state_dict(sd, strict=True)
         return (model,)
+
 
 class MelBandRoFormerSampler:
     @classmethod
@@ -76,95 +202,121 @@ class MelBandRoFormerSampler:
             "required": {
                 "model": ("MELROFORMERMODEL",),
                 "audio": ("AUDIO",),
+                "chunk_size": ("FLOAT", {
+                    "default": 8.0, "min": 1.0, "max": 30.0, "step": 0.5,
+                    "tooltip": "Chunk size in seconds. Smaller = less VRAM, larger = better quality on sustained sounds.",
+                }),
+                "overlap": ("INT", {
+                    "default": 2, "min": 2, "max": 8, "step": 1,
+                    "tooltip": "Overlap factor. Higher = smoother transitions but slower.",
+                }),
+                "fade_size": ("FLOAT", {
+                    "default": 0.1, "min": 0.01, "max": 0.5, "step": 0.01,
+                    "tooltip": "Crossfade ratio relative to chunk size. Higher = smoother blending.",
+                }),
+                "batch_size": ("INT", {
+                    "default": 1, "min": 1, "max": 16, "step": 1,
+                    "tooltip": "Number of chunks processed in parallel. Higher = faster but more VRAM. Start at 1 and increase until you hit OOM.",
+                }),
             },
         }
 
-    RETURN_TYPES = ("AUDIO","AUDIO",)
-    RETURN_NAMES = ("vocals", "instruments")
+    RETURN_TYPES = ("AUDIO", "AUDIO")
+    RETURN_NAMES = ("stem_1", "stem_2")
     FUNCTION = "process"
     CATEGORY = "Mel-Band RoFormer"
 
-    def process(self, model, audio):
-
+    def process(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1):
         audio_input = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
         B, audio_channels, audio_length = audio_input.shape
-
         sr = 44100
 
         if audio_channels == 1:
-            # Convert mono to stereo by duplicating the channel
             audio_input = audio_input.repeat(1, 2, 1)
             audio_channels = 2
-            print("Converted mono input to stereo.")
+            print("[MelBandRoFormer] Converted mono input to stereo.")
 
         if sample_rate != sr:
-            print(f"Resampling input {sample_rate} to {sr}")
+            print(f"[MelBandRoFormer] Resampling {sample_rate} → {sr}")
             audio_input = TAF.resample(audio_input, orig_freq=sample_rate, new_freq=sr)
-        audio_input = original_audio = audio_input[0]
 
-        C = 352800
-        N = 2
-        step = C // N
-        fade_size = C // 10
+        audio_input = original_audio = audio_input[0]  # [channels, time]
+        audio_length = audio_input.shape[1]            # use resampled length for border logic
+
+        C = int(chunk_size * sr)
+        step = C // overlap
+        fade_samples = max(1, int(C * fade_size))
         border = C - step
 
         if audio_length > 2 * border and border > 0:
             audio_input = F.pad(audio_input, (border, border), mode='reflect')
 
-        windowing_array = get_windowing_array(C, fade_size, device)
-
+        windowing_array = get_windowing_array(C, fade_samples, device)
 
         audio_input = audio_input.to(device)
-        vocals = torch.zeros_like(audio_input, dtype=torch.float32).to(device)
-        counter = torch.zeros_like(audio_input, dtype=torch.float32).to(device)
-
+        num_stems = len(model.mask_estimators)
         total_length = audio_input.shape[1]
-        num_chunks = (total_length + step - 1) // step
+        chunk_starts = list(range(0, total_length, step))
+        num_chunks = len(chunk_starts)
+
+        # accumulators: [num_stems, channels, time]
+        acc = torch.zeros(num_stems, *audio_input.shape, dtype=torch.float32, device=device)
+        cnt = torch.zeros(num_stems, *audio_input.shape, dtype=torch.float32, device=device)
 
         model.to(device)
-
         comfy_pbar = ProgressBar(num_chunks)
 
-        for i in tqdm(range(0, total_length, step), desc="Processing chunks"):
-            part = audio_input[:, i:i + C]
-            length = part.shape[-1]
-            if length < C:
-                if length > C // 2 + 1:
-                    part = F.pad(input=part, pad=(0, C - length), mode='reflect')
-                else:
-                    part = F.pad(input=part, pad=(0, C - length, 0, 0), mode='constant', value=0)
+        with torch.no_grad():
+            for b_start in tqdm(range(0, num_chunks, batch_size), desc="Processing chunks"):
+                batch_starts = chunk_starts[b_start:b_start + batch_size]
 
-            x = model(part.unsqueeze(0))[0]
+                # build batch
+                parts, lengths = [], []
+                for i in batch_starts:
+                    part = audio_input[:, i:i + C]
+                    length = part.shape[-1]
+                    lengths.append(length)
+                    if length < C:
+                        pad_mode = 'reflect' if length > C // 2 + 1 else 'constant'
+                        part = F.pad(part, (0, C - length), mode=pad_mode)
+                    parts.append(part)
 
-            window = windowing_array.clone()
-            if i == 0:
-                window[:fade_size] = 1
-            elif i + C >= total_length:
-                window[-fade_size:] = 1
+                batch_in = torch.stack(parts, dim=0)          # [B, channels, C]
+                batch_out = model(batch_in)                    # [B, channels, C] or [B, stems, channels, C]
+                if num_stems == 1:
+                    batch_out = batch_out.unsqueeze(1)         # → [B, 1, channels, C]
 
-            vocals[..., i:i+length] += x[..., :length] * window[..., :length]
-            counter[..., i:i+length] += window[..., :length]
-            comfy_pbar.update(1)
+                # accumulate each chunk in the batch
+                for idx, (i, length) in enumerate(zip(batch_starts, lengths)):
+                    out = batch_out[idx]                       # [stems, channels, C]
+                    window = windowing_array.clone()
+                    if i == 0:
+                        window[:fade_samples] = 1
+                    if i + C >= total_length:
+                        window[-fade_samples:] = 1
+
+                    acc[..., i:i + length] += out[..., :length] * window[..., :length]
+                    cnt[..., i:i + length] += window[..., :length]
+
+                comfy_pbar.update(len(batch_starts))
 
         model.to(offload_device)
 
-        estimated_sources = vocals / counter
+        estimated = acc / cnt.clamp(min=1e-8)   # [num_stems, channels, time]
 
         if audio_length > 2 * border and border > 0:
-            estimated_sources = estimated_sources[..., border:-border]
+            estimated = estimated[..., border:-border]
 
-        vocals_out = {
-            "waveform": estimated_sources.unsqueeze(0).cpu(),
-            "sample_rate": sr,
-        }
-        instruments_out = {
-            "waveform": (original_audio.to(device) - estimated_sources).unsqueeze(0).cpu(),
-            "sample_rate": sr,
-        }
+        stem1 = estimated[0]
+        stem2 = estimated[1] if num_stems >= 2 else (original_audio.to(device) - stem1)
 
-        return (vocals_out, instruments_out)
+        def to_audio(t):
+            return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
+
+        return (to_audio(stem1), to_audio(stem2))
+
 
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
