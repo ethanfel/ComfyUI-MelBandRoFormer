@@ -44,30 +44,51 @@ _BASE_CONFIG = {
 # ---------------------------------------------------------------------------
 MODEL_REGISTRY = {
     # ── Vocals ──────────────────────────────────────────────────────────────
-    "Vocals · Kim fp16 ⭐ [Kijai]":          ("Kijai/MelBandRoFormer_comfy",                           "MelBandRoformer_fp16.safetensors"),
-    "Vocals · Kim fp32 [Kijai]":             ("Kijai/MelBandRoFormer_comfy",                           "MelBandRoformer_fp32.safetensors"),
-    "Vocals · Kim original [KimberleyJSN]":  ("KimberleyJSN/melbandroformer",                          "MelBandRoformer.ckpt"),
-    "Vocals · becruily":                     ("becruily/mel-band-roformer-vocals",                     "mel_band_roformer_vocals_becruily.ckpt"),
-    "Vocals small · pcunwa":                 ("pcunwa/Mel-Band-Roformer-small",                        "melband_roformer_small_v1.ckpt"),
+    "Vocals · Kim fp16 ⭐ [Kijai]":                  ("Kijai/MelBandRoFormer_comfy",                      "MelBandRoformer_fp16.safetensors"),
+    "Vocals · Kim fp32 [Kijai]":                     ("Kijai/MelBandRoFormer_comfy",                      "MelBandRoformer_fp32.safetensors"),
+    "Vocals · Kim original [KimberleyJSN]":          ("KimberleyJSN/melbandroformer",                     "MelBandRoformer.ckpt"),
+    "Vocals · Kim FT v2 ⭐ [pcunwa]":                ("pcunwa/Kim-Mel-Band-Roformer-FT",                  "kimmel_unwa_ft2.ckpt"),
+    "Vocals · Kim FT v2 bleedless [pcunwa]":         ("pcunwa/Kim-Mel-Band-Roformer-FT",                  "kimmel_unwa_ft2_bleedless.ckpt"),
+    "Vocals · Kim FT v1 [pcunwa]":                   ("pcunwa/Kim-Mel-Band-Roformer-FT",                  "kimmel_unwa_ft.ckpt"),
+    "Vocals · becruily":                             ("becruily/mel-band-roformer-vocals",                "mel_band_roformer_vocals_becruily.ckpt"),
+    "Vocals · GaboxR67 fv7":                         ("GaboxR67/MelBandRoformers",                        "melbandroformers/vocals/voc_fv7.ckpt"),
+    "Vocals · GaboxR67 fv6":                         ("GaboxR67/MelBandRoformers",                        "melbandroformers/vocals/voc_fv6.ckpt"),
+    "Vocals small · pcunwa":                         ("pcunwa/Mel-Band-Roformer-small",                   "melband_roformer_small_v1.ckpt"),
     # ── Instrumental ────────────────────────────────────────────────────────
-    "Instrumental · becruily":               ("becruily/mel-band-roformer-instrumental",               "mel_band_roformer_instrumental_becruily.ckpt"),
+    "Instrumental · becruily":                       ("becruily/mel-band-roformer-instrumental",          "mel_band_roformer_instrumental_becruily.ckpt"),
+    "Instrumental v2 (depth-12) · pcunwa ⭐":        ("pcunwa/Mel-Band-Roformer-Inst",                    "melband_roformer_inst_v2.ckpt"),
+    "Instrumental v1 · pcunwa":                      ("pcunwa/Mel-Band-Roformer-Inst",                    "melband_roformer_inst_v1.ckpt"),
+    "Instrumental · GaboxR67 INSTV6 ⭐":             ("GaboxR67/MelBandRoformers",                        "melbandroformers/instrumental/INSTV6.ckpt"),
+    "Instrumental · GaboxR67 Fv9":                   ("GaboxR67/MelBandRoformers",                        "melbandroformers/instrumental/Inst_GaboxFv9.ckpt"),
+    "Instrumental · GaboxR67 Fv8":                   ("GaboxR67/MelBandRoformers",                        "melbandroformers/instrumental/Inst_GaboxFv8.ckpt"),
+    # ── Big models (dim=512) ─────────────────────────────────────────────────
+    "Vocals big beta6 (dim=512) · pcunwa ⭐":        ("pcunwa/Mel-Band-Roformer-big",                     "big_beta6.ckpt"),
+    "Vocals big beta6x (dim=512) · pcunwa":          ("pcunwa/Mel-Band-Roformer-big",                     "big_beta6x.ckpt"),
+    "Vocals big beta7 · pcunwa":                     ("pcunwa/Mel-Band-Roformer-big",                     "big_beta7.ckpt"),
     # ── Karaoke (lead-vocal removal) ────────────────────────────────────────
-    "Karaoke · aufr33/viperx ⭐":            ("jarredou/aufr33-viperx-karaoke-melroformer-model",      "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"),
-    "Karaoke · becruily (2-stem)":           ("becruily/mel-band-roformer-karaoke",                   "mel_band_roformer_karaoke_becruily.ckpt"),
+    "Karaoke · aufr33/viperx ⭐":                    ("jarredou/aufr33-viperx-karaoke-melroformer-model", "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"),
+    "Karaoke · becruily (2-stem)":                   ("becruily/mel-band-roformer-karaoke",               "mel_band_roformer_karaoke_becruily.ckpt"),
+    "Karaoke · GaboxR67 V1":                         ("GaboxR67/MelBandRoformers",                        "melbandroformers/karaoke/Karaoke_GaboxV1.ckpt"),
     # ── Vocals + Instrumental 2-stem ────────────────────────────────────────
-    "Vocals+Instrumental 2-stem · becruily": ("becruily/mel-band-roformer-deux",                      "becruily_deux.ckpt"),
+    "Vocals+Instrumental 2-stem · becruily":         ("becruily/mel-band-roformer-deux",                  "becruily_deux.ckpt"),
+    # ── 4-stem (vocals, drums, bass, other) ─────────────────────────────────
+    "4-stem large · Aname-Tommy [stem_1=vox only]":  ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_large_ver1.ckpt"),
+    "4-stem XL · Aname-Tommy [stem_1=vox only]":     ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_xl_ver1.ckpt"),
     # ── Dereverb / Echo removal ─────────────────────────────────────────────
-    "Dereverb+Echo v2 · Sucial ⭐":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb_echo_mbr_v2_sdr_dry_13.4843.ckpt"),
-    "Dereverb+Echo fused · Sucial":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb_echo_mbr_fused_0.5_v2_0.25_big_0.25_super.ckpt"),
-    "Dereverb big reverb · Sucial":          ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "de_big_reverb_mbr_ep_362.ckpt"),
-    "Dereverb super-big reverb · Sucial":    ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "de_super_big_reverb_mbr_ep_346.ckpt"),
-    "Dereverb+Echo v1 · Sucial":             ("Sucial/Dereverb-Echo_Mel_Band_Roformer",                "dereverb-echo_mel_band_roformer_sdr_10.0169.ckpt"),
+    "Dereverb · anvuew ⭐ (SDR 19.17)":              ("anvuew/dereverb_mel_band_roformer",                "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt"),
+    "Dereverb less-aggressive · anvuew (SDR 18.80)": ("anvuew/dereverb_mel_band_roformer",                "dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt"),
+    "Dereverb mono-optimized · anvuew (SDR 20.40)":  ("anvuew/dereverb_mel_band_roformer",                "dereverb_mel_band_roformer_mono_anvuew_sdr_20.4029.ckpt"),
+    "Dereverb+Echo v2 · Sucial":                     ("Sucial/Dereverb-Echo_Mel_Band_Roformer",           "dereverb_echo_mbr_v2_sdr_dry_13.4843.ckpt"),
+    "Dereverb+Echo fused · Sucial":                  ("Sucial/Dereverb-Echo_Mel_Band_Roformer",           "dereverb_echo_mbr_fused_0.5_v2_0.25_big_0.25_super.ckpt"),
+    "Dereverb big reverb · Sucial":                  ("Sucial/Dereverb-Echo_Mel_Band_Roformer",           "de_big_reverb_mbr_ep_362.ckpt"),
+    "Dereverb super-big reverb · Sucial":            ("Sucial/Dereverb-Echo_Mel_Band_Roformer",           "de_super_big_reverb_mbr_ep_346.ckpt"),
+    "Dereverb+Echo v1 · Sucial":                     ("Sucial/Dereverb-Echo_Mel_Band_Roformer",           "dereverb-echo_mel_band_roformer_sdr_10.0169.ckpt"),
     # ── Denoise ─────────────────────────────────────────────────────────────
-    "Denoise · aufr33 ⭐":                   ("poiqazwsx/melband-roformer-denoise",                   "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"),
-    "Denoise aggressive · aufr33":           ("poiqazwsx/melband-roformer-denoise",                   "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"),
+    "Denoise · aufr33 ⭐":                           ("poiqazwsx/melband-roformer-denoise",               "denoise_mel_band_roformer_aufr33_sdr_27.9959.ckpt"),
+    "Denoise aggressive · aufr33":                   ("poiqazwsx/melband-roformer-denoise",               "denoise_mel_band_roformer_aufr33_aggr_sdr_27.9768.ckpt"),
     # ── Aspiration (breath/mouth sounds) ────────────────────────────────────
-    "Aspiration · Sucial ⭐":                ("Sucial/Aspiration_Mel_Band_Roformer",                   "aspiration_mel_band_roformer_sdr_18.9845.ckpt"),
-    "Aspiration less-aggressive · Sucial":   ("Sucial/Aspiration_Mel_Band_Roformer",                   "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"),
+    "Aspiration · Sucial ⭐":                        ("Sucial/Aspiration_Mel_Band_Roformer",              "aspiration_mel_band_roformer_sdr_18.9845.ckpt"),
+    "Aspiration less-aggressive · Sucial":           ("Sucial/Aspiration_Mel_Band_Roformer",              "aspiration_mel_band_roformer_less_aggr_sdr_18.1201.ckpt"),
 }
 
 _HF_PREFIX = "[HF] "
@@ -310,7 +331,13 @@ class MelBandRoFormerSampler:
             estimated = estimated[..., border:-border]
 
         stem1 = estimated[0]
-        stem2 = estimated[1] if num_stems >= 2 else (original_audio.to(device) - stem1)
+        if num_stems >= 2:
+            stem2 = estimated[1]
+            if num_stems > 2:
+                print(f"[MelBandRoFormer] Model has {num_stems} stems; only stem_1 and stem_2 are output. "
+                      f"Stems 3–{num_stems} are discarded.")
+        else:
+            stem2 = original_audio.to(device) - stem1
 
         def to_audio(t):
             return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
