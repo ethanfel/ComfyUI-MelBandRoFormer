@@ -294,6 +294,27 @@ def infer_config(sd):
     return 'melband', infer_melband_config(sd)
 
 
+def _recommended_chunk_size(model_name, config):
+    """Estimate a good chunk_size (seconds) from model name and inferred config."""
+    name = model_name.lower()
+    num_stems = config.get("num_stems", 1)
+    dim = config.get("dim", 256)
+
+    if any(x in name for x in ("dereverb", "deverb", "echo")):
+        base = 12.0   # reverb tails can extend several seconds
+    elif any(x in name for x in ("denoise", "aspiration")):
+        base = 6.0    # stationary/transient content — less context needed
+    elif num_stems >= 4:
+        base = 10.0   # more simultaneous sources need more context
+    else:
+        base = 8.0    # general vocal / instrumental
+
+    if dim >= 512:
+        base = max(4.0, base - 2.0)   # wider model uses more VRAM per chunk
+
+    return base
+
+
 def download_hf_model(repo_id, filename):
     """Download a model from HuggingFace into ComfyUI's diffusion_models folder."""
     try:
@@ -353,8 +374,8 @@ class MelBandRoFormerModelLoader:
             },
         }
 
-    RETURN_TYPES = ("MELROFORMERMODEL",)
-    RETURN_NAMES = ("model",)
+    RETURN_TYPES = ("MELROFORMERMODEL", "FLOAT")
+    RETURN_NAMES = ("model", "recommended_chunk_size")
     FUNCTION = "loadmodel"
     CATEGORY = "Mel-Band RoFormer"
 
@@ -395,7 +416,9 @@ class MelBandRoFormerModelLoader:
             model = MelBandRoformer(**config).eval()
 
         model.load_state_dict(sd, strict=True)
-        return (model,)
+        chunk_rec = _recommended_chunk_size(model_name, config)
+        print(f"[MelBandRoFormer] Recommended chunk_size: {chunk_rec}s")
+        return (model, chunk_rec)
 
 
 class MelBandRoFormerSampler:
@@ -752,8 +775,8 @@ class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
             },
         }
 
-    RETURN_TYPES = ("MELROFORMERMODEL",)
-    RETURN_NAMES = ("model",)
+    RETURN_TYPES = ("MELROFORMERMODEL", "FLOAT")
+    RETURN_NAMES = ("model", "recommended_chunk_size")
     FUNCTION = "loadmodel"
     CATEGORY = "Mel-Band RoFormer"
 
