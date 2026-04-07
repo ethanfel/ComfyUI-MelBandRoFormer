@@ -446,11 +446,140 @@ class MelBandRoFormerSampler:
         return (to_audio(stem1), to_audio(stem2))
 
 
+def _audio_to_mono(audio):
+    """Return (mono_wav [T], sample_rate) from a ComfyUI AUDIO dict."""
+    waveform = audio["waveform"]  # [B, C, T]
+    sr = audio["sample_rate"]
+    wav = waveform[0].mean(0).cpu().float()  # [T]
+    return wav, sr
+
+
+def _log_spectrogram(wav, n_fft, hop_length):
+    """Compute log-magnitude spectrogram as a numpy float32 array [freq, time]."""
+    import numpy as np
+    window = torch.hann_window(n_fft)
+    stft = torch.stft(wav, n_fft=n_fft, hop_length=hop_length,
+                      window=window, return_complex=True)
+    mag = stft.abs().numpy()
+    return np.log1p(mag)
+
+
+def _render_figure(spec_a, spec_b, label_a, label_b, mode):
+    """Render comparison figure → numpy [H, W, 3] uint8."""
+    import numpy as np
+    from matplotlib.figure import Figure
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    min_t = min(spec_a.shape[1], spec_b.shape[1])
+    sa = spec_a[::-1, :min_t]   # flip: low freq at bottom
+    sb = spec_b[::-1, :min_t]
+
+    if mode == "stacked":
+        fig = Figure(figsize=(14, 6), tight_layout=True)
+        ax_a = fig.add_subplot(2, 1, 1)
+        ax_b = fig.add_subplot(2, 1, 2)
+        ax_a.imshow(sa, aspect="auto", cmap="magma", origin="upper")
+        ax_a.set_title(label_a, fontsize=10)
+        ax_a.set_ylabel("Frequency")
+        ax_b.imshow(sb, aspect="auto", cmap="magma", origin="upper")
+        ax_b.set_title(label_b, fontsize=10)
+        ax_b.set_ylabel("Frequency")
+        ax_b.set_xlabel("Time (frames)")
+
+    elif mode == "difference":
+        diff = sa - sb
+        max_val = float(np.abs(diff).max()) + 1e-8
+        fig = Figure(figsize=(14, 4), tight_layout=True)
+        ax = fig.add_subplot(1, 1, 1)
+        im = ax.imshow(diff, aspect="auto", cmap="RdBu_r",
+                       vmin=-max_val, vmax=max_val, origin="upper")
+        ax.set_title(f"Difference  [{label_a}] − [{label_b}]  (red = A louder, blue = B louder)", fontsize=10)
+        ax.set_ylabel("Frequency")
+        ax.set_xlabel("Time (frames)")
+        fig.colorbar(im, ax=ax, fraction=0.02, pad=0.01)
+
+    else:  # stacked + difference
+        diff = sa - sb
+        max_val = float(np.abs(diff).max()) + 1e-8
+        fig = Figure(figsize=(14, 9), tight_layout=True)
+        ax_a = fig.add_subplot(3, 1, 1)
+        ax_b = fig.add_subplot(3, 1, 2)
+        ax_d = fig.add_subplot(3, 1, 3)
+        ax_a.imshow(sa, aspect="auto", cmap="magma", origin="upper")
+        ax_a.set_title(label_a, fontsize=10)
+        ax_a.set_ylabel("Frequency")
+        ax_b.imshow(sb, aspect="auto", cmap="magma", origin="upper")
+        ax_b.set_title(label_b, fontsize=10)
+        ax_b.set_ylabel("Frequency")
+        im = ax_d.imshow(diff, aspect="auto", cmap="RdBu_r",
+                         vmin=-max_val, vmax=max_val, origin="upper")
+        ax_d.set_title(f"Difference  [{label_a}] − [{label_b}]", fontsize=10)
+        ax_d.set_ylabel("Frequency")
+        ax_d.set_xlabel("Time (frames)")
+        fig.colorbar(im, ax=ax_d, fraction=0.02, pad=0.01)
+
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    import numpy as np
+    buf = canvas.buffer_rgba()
+    img = np.asarray(buf)[..., :3].copy()  # drop alpha, [H, W, 3] uint8
+    return img
+
+
+class MelBandRoFormerSpectrogram:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "audio_a": ("AUDIO", {}),
+                "audio_b": ("AUDIO", {}),
+                "label_a": ("STRING", {"default": "A"}),
+                "label_b": ("STRING", {"default": "B"}),
+                "mode": (["stacked", "difference", "stacked + difference"],),
+                "n_fft": ("INT", {
+                    "default": 2048, "min": 512, "max": 8192, "step": 512,
+                    "tooltip": "FFT size. Larger = better frequency resolution, lower time resolution.",
+                }),
+                "hop_length": ("INT", {
+                    "default": 512, "min": 64, "max": 2048, "step": 64,
+                    "tooltip": "Hop size in samples. Smaller = better time resolution.",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("spectrogram",)
+    FUNCTION = "compare"
+    CATEGORY = "Mel-Band RoFormer"
+
+    def compare(self, audio_a, audio_b, label_a, label_b, mode, n_fft, hop_length):
+        sr_target = 44100
+
+        wav_a, sr_a = _audio_to_mono(audio_a)
+        wav_b, sr_b = _audio_to_mono(audio_b)
+
+        if sr_a != sr_target:
+            wav_a = TAF.resample(wav_a.unsqueeze(0), sr_a, sr_target).squeeze(0)
+        if sr_b != sr_target:
+            wav_b = TAF.resample(wav_b.unsqueeze(0), sr_b, sr_target).squeeze(0)
+
+        spec_a = _log_spectrogram(wav_a, n_fft, hop_length)
+        spec_b = _log_spectrogram(wav_b, n_fft, hop_length)
+
+        img = _render_figure(spec_a, spec_b, label_a, label_b, mode)
+
+        img_tensor = torch.from_numpy(img).float() / 255.0  # [H, W, 3]
+        img_tensor = img_tensor.unsqueeze(0)                 # [1, H, W, 3]
+        return (img_tensor,)
+
+
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
     "MelBandRoFormerSampler": MelBandRoFormerSampler,
+    "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
     "MelBandRoFormerSampler": "Mel-Band RoFormer Sampler",
+    "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
 }
