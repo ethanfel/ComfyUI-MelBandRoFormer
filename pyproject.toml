@@ -1,6 +1,6 @@
 [project]
 name = "ComfyUI-MelBandRoFormer"
-description = "ComfyUI wrapper nodes for WanVideo"
+description = "ComfyUI nodes for Mel-Band RoFormer and BS-RoFormer audio source separation — vocals, instruments, dereverb, denoise, and more"
 version = "1.0.2"
 license = {file = "LICENSE", text = "Apache-2.0"}
 dependencies = ["rotary_embedding_torch", "einops", "huggingface_hub", "BS-RoFormer"]
@@ -10,6 +10,6 @@ Repository = "https://github.com/kijai/ComfyUI-MelBandRoFormer"
 #  Used by Comfy Registry https://comfyregistry.org
 
 [tool.comfy]
-PublisherId = "kijai"
+PublisherId = "ethanfel"
 DisplayName = "ComfyUI-MelBandRoFormer"
 Icon = ""
