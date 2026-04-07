@@ -1,8 +1,12 @@
 # ComfyUI-MelBandRoFormer
 
-ComfyUI nodes for **Mel-Band RoFormer** — a state-of-the-art audio source separation model. Split audio into vocals and instruments, remove reverb, denoise recordings, isolate breath sounds, and more.
+ComfyUI nodes for **Mel-Band RoFormer** and **BS-RoFormer** — state-of-the-art audio source separation models. Split audio into vocals and instruments, remove reverb, denoise recordings, isolate breath sounds, and more.
 
-Based on the paper: [Mel-Band RoFormer for Music Source Separation](https://arxiv.org/abs/2310.01809) (Lu et al., 2023)
+Both architectures are supported from a single loader node — the checkpoint is automatically detected.
+
+Based on the papers:
+- [Mel-Band RoFormer for Music Source Separation](https://arxiv.org/abs/2310.01809) (Lu et al., 2023)
+- [Music Source Separation with Band-Split RoFormer](https://arxiv.org/abs/2309.02612) (Yu et al., 2023)
 
 ![Workflow example](https://github.com/user-attachments/assets/05468504-b1b8-41da-8453-ae61e2c56a53)
 
@@ -35,9 +39,10 @@ To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file 
 |---|---|
 | Extract vocals from a song | **Vocals · Kim FT v2 ⭐** |
 | Extract vocals with minimal instrument bleed | **Vocals · Kim FT v2 bleedless** |
+| Best vocal quality, BS-RoFormer architecture | **[BS] Vocals revive v3e · pcunwa** |
 | Extract the instrumental / backing track | **Instrumental · GaboxR67 INSTV6 ⭐** |
 | Make a karaoke track (remove lead vocal) | **Karaoke · aufr33/viperx ⭐** |
-| Remove room reverb from a recording | **Dereverb · anvuew ⭐** |
+| Remove room reverb from a recording | **[BS] Dereverb · anvuew (SDR 22.51)** |
 | Denoise a recording | **Denoise · aufr33 ⭐** |
 | Isolate breath / mouth sounds | **Aspiration · Sucial ⭐** |
 | Separate vocals + drums + bass + other | **4-stem large · Aname-Tommy** |
@@ -58,7 +63,7 @@ Loads a model from your local folder or downloads it automatically from HuggingF
 
 **Output:** a `MELROFORMERMODEL` — connect it to the Sampler node.
 
-The loader automatically detects the model architecture from the checkpoint, so any model in the registry will load correctly regardless of its internal configuration.
+The loader automatically detects whether the checkpoint is a **Mel-Band RoFormer** or **BS-RoFormer** model and instantiates the correct architecture. No configuration needed.
 
 ---
 
@@ -105,6 +110,20 @@ Extract the vocal track from a song.
 | **Vocals big beta6 (dim=512)** | — | Wider architecture than standard (dim=512 vs 384) — potentially higher quality at the cost of more VRAM | ⭐⭐⭐⭐⭐ Best quality, high VRAM |
 | **Vocals big beta6x** | — | Experimental variant of beta6 | ⭐⭐⭐⭐ |
 | **Vocals big beta7** | — | Latest big series, depth=8 | ⭐⭐⭐⭐ |
+
+---
+
+### BS-RoFormer Vocals
+
+BS-RoFormer uses non-overlapping linear frequency bands instead of overlapping mel bands. It is slightly weaker than the best MelBandRoFormer models on vocals alone, but handles bass frequencies more precisely.
+
+| Model | Notes | Quality |
+|---|---|---|
+| **[BS] Vocals revive v3e · pcunwa** | Latest and best of the Revive series | ⭐⭐⭐⭐⭐ Best BS-RoFormer vocal |
+| **[BS] Vocals revive v2 · pcunwa** | Second iteration | ⭐⭐⭐⭐ |
+| **[BS] Vocals revive v1 · pcunwa** | Original Revive checkpoint | ⭐⭐⭐ |
+
+`stem_1` = vocals. `stem_2` = residual (instrumental).
 
 ---
 
@@ -168,8 +187,9 @@ Remove room reverb and echo from recordings. Useful for cleaning up vocal takes,
 
 | Model | SDR | Notes | Quality |
 |---|---|---|---|
-| **Dereverb mono-optimized · anvuew** | 20.40 | Highest SDR — optimized for mono or centered sources | ⭐⭐⭐⭐⭐ Best SDR |
-| **Dereverb · anvuew** | 19.17 | General-purpose dereverb, best for stereo material | ⭐⭐⭐⭐⭐ Best overall |
+| **[BS] Dereverb · anvuew** | 22.51 | BS-RoFormer model — highest SDR of any dereverb model here | ⭐⭐⭐⭐⭐ Best overall |
+| **Dereverb mono-optimized · anvuew** | 20.40 | MelBand — optimized for mono or centered sources | ⭐⭐⭐⭐⭐ Best MelBand SDR |
+| **Dereverb · anvuew** | 19.17 | MelBand — general-purpose, best for stereo material | ⭐⭐⭐⭐⭐ |
 | **Dereverb less-aggressive · anvuew** | 18.80 | Same model, less processing — good when you want to preserve some room feel | ⭐⭐⭐⭐ |
 | **Dereverb+Echo v2 · Sucial** | 13.48 | Trained on singing voice data (opencpop/GTSinger) | ⭐⭐⭐ Good for singing |
 | **Dereverb+Echo fused · Sucial** | — | Blend of v2, big, and super-big Sucial models | ⭐⭐⭐ |
@@ -243,22 +263,24 @@ You can connect the output of one Sampler into a second Sampler for two-stage pr
 
 ## Credits & Attribution
 
-### Paper
+### Papers
 - **Mel-Band RoFormer** — Lu et al. (2023): [arxiv.org/abs/2310.01809](https://arxiv.org/abs/2310.01809)
+- **BS-RoFormer** — Yu et al. (2023): [arxiv.org/abs/2309.02612](https://arxiv.org/abs/2309.02612)
 
 ### Original Implementation & Models
 - **[KimberleyJensen](https://github.com/KimberleyJensen/Mel-Band-Roformer-Vocal-Model)** — original vocal model implementation and checkpoint
 - **[Kijai](https://huggingface.co/Kijai/MelBandRoFormer_comfy)** — ComfyUI-optimized safetensors (fp16/fp32)
 - **[ZFTurbo](https://github.com/ZFTurbo/Music-Source-Separation-Training)** — training framework used by most models in this registry
+- **[lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer)** — BS-RoFormer PyPI package used for BS-RoFormer inference
 
 ### Model Authors
 | Author | Models |
 |---|---|
-| **[pcunwa](https://huggingface.co/pcunwa)** | Kim FT finetuned variants, Inst v1/v2, big beta series |
+| **[pcunwa](https://huggingface.co/pcunwa)** | Kim FT finetuned variants, Inst v1/v2, big beta series, BS-RoFormer Revive series |
 | **[aufr33](https://huggingface.co/poiqazwsx/melband-roformer-denoise) & [viperx](https://huggingface.co/jarredou/aufr33-viperx-karaoke-melroformer-model)** | Karaoke model, denoise models |
 | **[Sucial](https://huggingface.co/Sucial)** | Dereverb+Echo models, Aspiration models |
 | **[becruily](https://huggingface.co/becruily)** | Vocals, instrumental, karaoke, deux (2-stem) |
-| **[anvuew](https://huggingface.co/anvuew/dereverb_mel_band_roformer)** | High-SDR dereverb models |
+| **[anvuew](https://huggingface.co/anvuew)** | High-SDR MelBand dereverb models + BS-RoFormer dereverb (SDR 22.51) |
 | **[GaboxR67](https://huggingface.co/GaboxR67/MelBandRoformers)** | Extensive community vocal, instrumental, karaoke variants |
 | **[Aname-Tommy](https://huggingface.co/Aname-Tommy/melbandroformer4stems)** | 4-stem large and XL models |
 
