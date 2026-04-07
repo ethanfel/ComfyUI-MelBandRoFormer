@@ -126,6 +126,51 @@ MODEL_REGISTRY = {
 _HF_PREFIX = "[HF] "
 _ACK_FILE = os.path.join(folder_paths.get_folder_paths("MelBandRoFormer")[0], ".ckpt_risk_acknowledged")
 
+# Latest/best model from each series — shown in the curated loader node.
+# Older versions that are superseded are excluded (Kim FT v1, GaboxR67 fv6, etc.)
+_LATEST_MODEL_NAMES = frozenset({
+    # Vocals
+    "Vocals · Kim FT v2 ⭐ [pcunwa]",
+    "Vocals · Kim FT v2 bleedless [pcunwa]",
+    "Vocals · Kim fp16 ⭐ [Kijai]",
+    "Vocals · becruily",
+    "Vocals · GaboxR67 fv7",
+    "Vocals small · pcunwa",
+    # Instrumental
+    "Instrumental · GaboxR67 INSTV6 ⭐",
+    "Instrumental v2 (depth-12) · pcunwa ⭐",
+    "Instrumental · becruily",
+    # Big (dim=512)
+    "Vocals big beta6 (dim=512) · pcunwa ⭐",
+    "Vocals big beta7 · pcunwa",
+    # Karaoke
+    "Karaoke · aufr33/viperx ⭐",
+    "Karaoke · becruily (2-stem)",
+    "Karaoke · GaboxR67 V1",
+    # 2-stem direct
+    "Vocals+Instrumental 2-stem · becruily",
+    # 4-stem
+    "4-stem large · Aname-Tommy [stem_1=vox only]",
+    "4-stem XL · Aname-Tommy [stem_1=vox only]",
+    # Dereverb
+    "[BS] Dereverb · anvuew ⭐ (SDR 22.51)",
+    "Dereverb · anvuew ⭐ (SDR 19.17)",
+    "Dereverb mono-optimized · anvuew (SDR 20.40)",
+    "Dereverb less-aggressive · anvuew (SDR 18.80)",
+    "Dereverb+Echo v2 · Sucial",
+    "Dereverb big reverb · Sucial",
+    "Dereverb super-big reverb · Sucial",
+    "Dereverb+Echo fused · Sucial",
+    # Denoise
+    "Denoise · aufr33 ⭐",
+    "Denoise aggressive · aufr33",
+    # Aspiration
+    "Aspiration · Sucial ⭐",
+    "Aspiration less-aggressive · Sucial",
+    # BS-RoFormer vocals
+    "[BS] Vocals revive v3e ⭐ · pcunwa",
+})
+
 
 def _ckpt_acknowledged():
     return os.path.exists(_ACK_FILE)
@@ -140,9 +185,18 @@ def _hf_model_choices():
     return [_HF_PREFIX + name for name in MODEL_REGISTRY]
 
 
+def _latest_hf_model_choices():
+    return [_HF_PREFIX + name for name in MODEL_REGISTRY if name in _LATEST_MODEL_NAMES]
+
+
 def _all_model_choices():
     local = folder_paths.get_filename_list("MelBandRoFormer")
     return local + _hf_model_choices()
+
+
+def _latest_model_choices():
+    local = folder_paths.get_filename_list("MelBandRoFormer")
+    return local + _latest_hf_model_choices()
 
 
 def _detect_model_type(sd):
@@ -573,13 +627,53 @@ class MelBandRoFormerSpectrogram:
         return (img_tensor,)
 
 
+class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
+    """Curated loader — shows only the latest/best model from each series."""
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model_name": (
+                    _latest_model_choices(),
+                    {
+                        "tooltip": (
+                            "Curated list showing only the latest or best model from each series. "
+                            "Older superseded versions are hidden. "
+                            "Use the full Model Loader node to access every available model. "
+                            "Local files appear first; '[HF]' entries auto-download on first use."
+                        ),
+                    },
+                ),
+                "acknowledge_ckpt_risk": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": (
+                        "Most models use the .ckpt format, which is based on Python pickle. "
+                        "Pickle can execute arbitrary code when loaded — a malicious .ckpt file "
+                        "could run anything on your machine. All models in this registry come from "
+                        "known, trusted authors on HuggingFace, so the practical risk is low. "
+                        "Check this box to confirm you understand and accept this risk. "
+                        "Your acknowledgment is saved to disk and won't be asked again."
+                    ),
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("MELROFORMERMODEL",)
+    RETURN_NAMES = ("model",)
+    FUNCTION = "loadmodel"
+    CATEGORY = "Mel-Band RoFormer"
+
+
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
+    "MelBandRoFormerModelLoaderLatest": MelBandRoFormerModelLoaderLatest,
     "MelBandRoFormerSampler": MelBandRoFormerSampler,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
+    "MelBandRoFormerModelLoaderLatest": "Mel-Band RoFormer Model Loader (Latest)",
     "MelBandRoFormerSampler": "Mel-Band RoFormer Sampler",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
 }
