@@ -892,11 +892,76 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         return [to_audio(estimated[i]) for i in range(num_stems)]
 
 
+class MelBandRoFormerLUFSNormalize:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "target_lufs": ("FLOAT", {
+                    "default": -14.0, "min": -70.0, "max": 0.0, "step": 0.5,
+                    "tooltip": "Target integrated loudness in LUFS. Common values: -14 (streaming), -23 (broadcast EBU R128), -16 (podcast).",
+                }),
+                "peak_limit_db": ("FLOAT", {
+                    "default": -1.0, "min": -20.0, "max": 0.0, "step": 0.5,
+                    "tooltip": "True-peak ceiling in dBFS after normalization. Prevents clipping.",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("AUDIO", "FLOAT", "FLOAT")
+    RETURN_NAMES = ("audio", "input_lufs", "applied_gain_db")
+    FUNCTION = "normalize"
+    CATEGORY = "Mel-Band RoFormer"
+
+    def normalize(self, audio, target_lufs=-14.0, peak_limit_db=-1.0):
+        try:
+            import pyloudnorm as pyln
+        except ImportError:
+            raise ImportError(
+                "pyloudnorm is required for LUFS normalization. "
+                "Install with:  pip install pyloudnorm"
+            )
+
+        waveform = audio["waveform"]   # [B, C, T]
+        sr = audio["sample_rate"]
+
+        wav = waveform[0].cpu().float()   # [C, T]
+        np_wav = wav.numpy().T            # [T, C] as pyloudnorm expects
+
+        meter = pyln.Meter(sr)
+        input_lufs = meter.integrated_loudness(np_wav)
+
+        if input_lufs == float("-inf"):
+            print("[MelBandRoFormer] LUFS Normalize: input is silent, skipping.")
+            return (audio, float("-inf"), 0.0)
+
+        gain_db = target_lufs - input_lufs
+        peak_limit_linear = 10 ** (peak_limit_db / 20.0)
+
+        gain_linear = 10 ** (gain_db / 20.0)
+        normalized = wav * gain_linear
+
+        # Clamp to peak limit
+        peak = normalized.abs().max().item()
+        if peak > peak_limit_linear:
+            clamp_gain = peak_limit_linear / peak
+            normalized = normalized * clamp_gain
+            gain_db += 20.0 * torch.log10(torch.tensor(clamp_gain)).item()
+            print(f"[MelBandRoFormer] LUFS Normalize: peak clamped by {20.0 * (clamp_gain - 1):.2f} dB")
+
+        print(f"[MelBandRoFormer] LUFS Normalize: {input_lufs:.1f} → {target_lufs:.1f} LUFS  (gain {gain_db:+.1f} dB)")
+
+        out = {"waveform": normalized.unsqueeze(0), "sample_rate": sr}
+        return (out, round(input_lufs, 2), round(gain_db, 2))
+
+
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
     "MelBandRoFormerModelLoaderLatest": MelBandRoFormerModelLoaderLatest,
     "MelBandRoFormerSampler": MelBandRoFormerSampler,
     "MelBandRoFormerSampler4Stem": MelBandRoFormerSampler4Stem,
+    "MelBandRoFormerLUFSNormalize": MelBandRoFormerLUFSNormalize,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -904,5 +969,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoaderLatest": "Mel-Band RoFormer Model Loader (Latest)",
     "MelBandRoFormerSampler": "Mel-Band RoFormer Sampler",
     "MelBandRoFormerSampler4Stem": "Mel-Band RoFormer Sampler (4-stem)",
+    "MelBandRoFormerLUFSNormalize": "Mel-Band RoFormer LUFS Normalize",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
 }
