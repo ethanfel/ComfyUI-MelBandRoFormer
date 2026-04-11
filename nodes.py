@@ -444,6 +444,10 @@ class MelBandRoFormerSampler:
                     "default": 1, "min": 1, "max": 16, "step": 1,
                     "tooltip": "Number of chunks processed in parallel. Higher = faster but more VRAM. Start at 1 and increase until you hit OOM.",
                 }),
+                "intensity": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Separation intensity. 1.0 = full separation (default). Lower values blend each stem back toward the original mix.",
+                }),
             },
         }
 
@@ -452,7 +456,7 @@ class MelBandRoFormerSampler:
     FUNCTION = "process"
     CATEGORY = "Mel-Band RoFormer"
 
-    def process(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1):
+    def process(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1, intensity=1.0):
         audio_input = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
@@ -543,6 +547,11 @@ class MelBandRoFormerSampler:
                       f"Stems 3–{num_stems} are discarded.")
         else:
             stem2 = original_audio.to(device) - stem1
+
+        if intensity < 1.0:
+            orig = original_audio.to(device)
+            stem1 = intensity * stem1 + (1.0 - intensity) * orig
+            stem2 = intensity * stem2 + (1.0 - intensity) * orig
 
         def to_audio(t):
             return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
@@ -793,8 +802,8 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
     FUNCTION = "process4"
     CATEGORY = "Mel-Band RoFormer"
 
-    def process4(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1):
-        stems = self._process_all(model, audio, chunk_size, overlap, fade_size, batch_size)
+    def process4(self, model, audio, chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1, intensity=1.0):
+        stems = self._process_all(model, audio, chunk_size, overlap, fade_size, batch_size, intensity)
         sr = stems[0]["sample_rate"]
         length = stems[0]["waveform"].shape[-1]
         channels = stems[0]["waveform"].shape[1]
@@ -806,7 +815,7 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
 
         return (_get(0), _get(1), _get(2), _get(3))
 
-    def _process_all(self, model, audio, chunk_size, overlap, fade_size, batch_size):
+    def _process_all(self, model, audio, chunk_size, overlap, fade_size, batch_size, intensity=1.0):
         """Run inference and return a list of all stem AUDIO dicts."""
         audio_input = audio["waveform"]
         sample_rate = audio["sample_rate"]
@@ -887,7 +896,15 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         if num_stems == 1:
             stem1 = estimated[0]
             stem2 = original_audio.to(device) - stem1
+            if intensity < 1.0:
+                orig = original_audio.to(device)
+                stem1 = intensity * stem1 + (1.0 - intensity) * orig
+                stem2 = intensity * stem2 + (1.0 - intensity) * orig
             return [to_audio(stem1), to_audio(stem2)]
+
+        if intensity < 1.0:
+            orig = original_audio.to(device)
+            estimated = intensity * estimated + (1.0 - intensity) * orig
 
         return [to_audio(estimated[i]) for i in range(num_stems)]
 
