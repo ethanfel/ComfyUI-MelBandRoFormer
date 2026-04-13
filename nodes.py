@@ -520,15 +520,16 @@ class MelBandRoFormerSampler:
 
                 # accumulate each chunk in the batch
                 for idx, (i, length) in enumerate(zip(batch_starts, lengths)):
-                    out = batch_out[idx]                       # [stems, channels, C]
-                    window = windowing_array.clone()
+                    out = batch_out[idx]                       # [stems, channels, C_out]
+                    eff = min(length, out.shape[-1])            # model iSTFT may shorten C
+                    window = windowing_array[:eff].clone()
                     if i == 0:
                         window[:fade_samples] = 1
                     if i + C >= total_length:
                         window[-fade_samples:] = 1
 
-                    acc[..., i:i + length] += out[..., :length] * window[..., :length]
-                    cnt[..., i:i + length] += window[..., :length]
+                    acc[..., i:i + eff] += out[..., :eff] * window[..., :eff]
+                    cnt[..., i:i + eff] += window[..., :eff]
 
                 comfy_pbar.update(len(batch_starts))
 
@@ -874,13 +875,14 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
 
                 for idx, (i, length) in enumerate(zip(batch_starts, lengths)):
                     out = batch_out[idx]
-                    window = windowing_array.clone()
+                    eff = min(length, out.shape[-1])
+                    window = windowing_array[:eff].clone()
                     if i == 0:
                         window[:fade_samples] = 1
                     if i + C >= total_length:
                         window[-fade_samples:] = 1
-                    acc[..., i:i + length] += out[..., :length] * window[..., :length]
-                    cnt[..., i:i + length] += window[..., :length]
+                    acc[..., i:i + eff] += out[..., :eff] * window[..., :eff]
+                    cnt[..., i:i + eff] += window[..., :eff]
 
                 comfy_pbar.update(len(batch_starts))
 
