@@ -975,6 +975,76 @@ class MelBandRoFormerLUFSNormalize:
         return (out, round(input_lufs, 2), round(gain_db, 2))
 
 
+FOLEYTUNE_AUDIO_DATASET = "FOLEYTUNE_AUDIO_DATASET"
+
+
+class MelBandRoFormerDatasetSampler(MelBandRoFormerSampler):
+    """Run MelBandRoFormer separation on every clip in a FoleyTune dataset."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MELROFORMERMODEL",),
+                "dataset": (FOLEYTUNE_AUDIO_DATASET,),
+                "stem_select": (["stem_1", "stem_2"],
+                    {"tooltip": "Which separated stem replaces the dataset audio. "
+                                "For vocal models: stem_1 = vocals, stem_2 = instrumental."}),
+                "chunk_size": ("FLOAT", {
+                    "default": 8.0, "min": 1.0, "max": 30.0, "step": 0.5,
+                    "tooltip": "Chunk size in seconds.",
+                }),
+                "overlap": ("INT", {
+                    "default": 2, "min": 2, "max": 8, "step": 1,
+                    "tooltip": "Overlap factor.",
+                }),
+                "fade_size": ("FLOAT", {
+                    "default": 0.1, "min": 0.01, "max": 0.5, "step": 0.01,
+                    "tooltip": "Crossfade ratio relative to chunk size.",
+                }),
+                "batch_size": ("INT", {
+                    "default": 1, "min": 1, "max": 16, "step": 1,
+                    "tooltip": "Chunks processed in parallel. Higher = faster but more VRAM.",
+                }),
+                "intensity": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Separation intensity. 1.0 = full separation. Lower values blend back toward original.",
+                }),
+            },
+        }
+
+    RETURN_TYPES = (FOLEYTUNE_AUDIO_DATASET,)
+    RETURN_NAMES = ("dataset",)
+    FUNCTION = "process_dataset"
+    CATEGORY = "Mel-Band RoFormer"
+    DESCRIPTION = (
+        "Run audio source separation on every clip in a FoleyTune dataset. "
+        "Replaces each clip's waveform with the selected stem. Output is 44100 Hz."
+    )
+
+    def process_dataset(self, model, dataset, stem_select, chunk_size=8.0,
+                        overlap=2, fade_size=0.1, batch_size=1, intensity=1.0):
+        stem_idx = 0 if stem_select == "stem_1" else 1
+        out = []
+        total = len(dataset)
+
+        for i, item in enumerate(dataset):
+            name = item.get("name", f"clip_{i}")
+            print(f"[MelBandRoFormer Dataset] Processing {i + 1}/{total}: {name}", flush=True)
+
+            audio = {"waveform": item["waveform"], "sample_rate": item["sample_rate"]}
+            stems = self.process(model, audio, chunk_size, overlap, fade_size, batch_size, intensity)
+            selected = stems[stem_idx]
+
+            new_item = dict(item)
+            new_item["waveform"] = selected["waveform"]
+            new_item["sample_rate"] = selected["sample_rate"]
+            out.append(new_item)
+
+        print(f"[MelBandRoFormer Dataset] Done — {total} clips processed, kept {stem_select}", flush=True)
+        return (out,)
+
+
 NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerModelLoader": MelBandRoFormerModelLoader,
     "MelBandRoFormerModelLoaderLatest": MelBandRoFormerModelLoaderLatest,
@@ -982,6 +1052,7 @@ NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerSampler4Stem": MelBandRoFormerSampler4Stem,
     "MelBandRoFormerLUFSNormalize": MelBandRoFormerLUFSNormalize,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
+    "MelBandRoFormerDatasetSampler": MelBandRoFormerDatasetSampler,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
@@ -990,4 +1061,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerSampler4Stem": "Mel-Band RoFormer Sampler (4-stem)",
     "MelBandRoFormerLUFSNormalize": "Mel-Band RoFormer LUFS Normalize",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
+    "MelBandRoFormerDatasetSampler": "Mel-Band RoFormer Dataset Sampler",
 }
