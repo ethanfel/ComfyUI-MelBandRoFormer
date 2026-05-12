@@ -554,6 +554,11 @@ class MelBandRoFormerSampler:
             stem1 = intensity * stem1 + (1.0 - intensity) * orig
             stem2 = intensity * stem2 + (1.0 - intensity) * orig
 
+        if sample_rate != sr:
+            stem1 = TAF.resample(stem1.unsqueeze(0), orig_freq=sr, new_freq=sample_rate).squeeze(0)
+            stem2 = TAF.resample(stem2.unsqueeze(0), orig_freq=sr, new_freq=sample_rate).squeeze(0)
+            sr = sample_rate
+
         def to_audio(t):
             return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
 
@@ -892,9 +897,6 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         if audio_length > 2 * border and border > 0:
             estimated = estimated[..., border:-border]
 
-        def to_audio(t):
-            return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
-
         if num_stems == 1:
             stem1 = estimated[0]
             stem2 = original_audio.to(device) - stem1
@@ -902,11 +904,18 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
                 orig = original_audio.to(device)
                 stem1 = intensity * stem1 + (1.0 - intensity) * orig
                 stem2 = intensity * stem2 + (1.0 - intensity) * orig
-            return [to_audio(stem1), to_audio(stem2)]
-
-        if intensity < 1.0:
+            estimated = torch.stack([stem1, stem2], dim=0)
+            num_stems = 2
+        elif intensity < 1.0:
             orig = original_audio.to(device)
             estimated = intensity * estimated + (1.0 - intensity) * orig
+
+        if sample_rate != sr:
+            estimated = TAF.resample(estimated, orig_freq=sr, new_freq=sample_rate)
+            sr = sample_rate
+
+        def to_audio(t):
+            return {"waveform": t.unsqueeze(0).cpu(), "sample_rate": sr}
 
         return [to_audio(estimated[i]) for i in range(num_stems)]
 
