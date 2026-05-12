@@ -995,6 +995,15 @@ def _load_audio(path):
     return wav, sr
 
 
+def _save_audio(path, wav, sr, fmt="flac"):
+    """Save [C, L] tensor as audio using soundfile (no FFmpeg needed)."""
+    import soundfile as sf
+    import numpy as np
+    wav_np = wav.cpu().float().numpy().T  # [L, C]
+    subtype = "PCM_24" if fmt == "flac" else "PCM_16"
+    sf.write(str(path), wav_np, sr, subtype=subtype)
+
+
 class MelBandRoFormerFolderLoader:
     """Load all audio files from a folder into a dataset for batch processing."""
 
@@ -1066,7 +1075,6 @@ class MelBandRoFormerDatasetSaver:
 
     def save(self, dataset, output_folder, format="flac"):
         from pathlib import Path
-        import torchaudio
 
         out_dir = Path(output_folder.strip())
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -1080,8 +1088,7 @@ class MelBandRoFormerDatasetSaver:
             if wav.dim() == 3:
                 wav = wav[0]
 
-            out_path = out_dir / f"{name}.{format}"
-            torchaudio.save(str(out_path), wav.cpu().float(), sr)
+            _save_audio(out_dir / f"{name}.{format}", wav, sr, format)
             saved += 1
 
         report = f"Saved {saved} clips to {out_dir}"
@@ -1143,7 +1150,6 @@ class MelBandRoFormerBatchProcessor(MelBandRoFormerSampler):
     def batch_process(self, model, input_folder, output_folder, format="flac",
                       chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1, intensity=1.0):
         from pathlib import Path
-        import torchaudio
 
         in_dir = Path(input_folder.strip())
         out_dir = Path(output_folder.strip())
@@ -1170,7 +1176,7 @@ class MelBandRoFormerBatchProcessor(MelBandRoFormerSampler):
                     w = stem["waveform"]
                     if w.dim() == 3:
                         w = w[0]
-                    torchaudio.save(str(out_dir / f"{name}_{label}.{format}"), w.cpu().float(), stem["sample_rate"])
+                    _save_audio(out_dir / f"{name}_{label}.{format}", w, stem["sample_rate"], format)
 
                 saved += 1
             except Exception as e:
