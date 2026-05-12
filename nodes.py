@@ -1089,6 +1089,98 @@ class MelBandRoFormerDatasetSaver:
         return (report,)
 
 
+class MelBandRoFormerBatchProcessor(MelBandRoFormerSampler):
+    """Load a folder of audio, run separation, save both stems to an output folder."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "model": ("MELROFORMERMODEL",),
+                "input_folder": ("STRING", {
+                    "default": "",
+                    "tooltip": "Folder containing audio files to process.",
+                }),
+                "output_folder": ("STRING", {
+                    "default": "",
+                    "tooltip": "Folder to save separated stems. Created if needed.",
+                }),
+                "format": (["flac", "wav"],
+                    {"tooltip": "Output audio format."}),
+                "chunk_size": ("FLOAT", {
+                    "default": 8.0, "min": 1.0, "max": 30.0, "step": 0.5,
+                    "tooltip": "Chunk size in seconds.",
+                }),
+                "overlap": ("INT", {
+                    "default": 2, "min": 2, "max": 8, "step": 1,
+                    "tooltip": "Overlap factor.",
+                }),
+                "fade_size": ("FLOAT", {
+                    "default": 0.1, "min": 0.01, "max": 0.5, "step": 0.01,
+                    "tooltip": "Crossfade ratio relative to chunk size.",
+                }),
+                "batch_size": ("INT", {
+                    "default": 1, "min": 1, "max": 16, "step": 1,
+                    "tooltip": "Chunks processed in parallel.",
+                }),
+                "intensity": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Separation intensity.",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("report",)
+    FUNCTION = "batch_process"
+    CATEGORY = "Mel-Band RoFormer"
+    OUTPUT_NODE = True
+    DESCRIPTION = (
+        "Load all audio from input_folder, run separation, save both stems "
+        "to output_folder as name_stem1/name_stem2."
+    )
+
+    def batch_process(self, model, input_folder, output_folder, format="flac",
+                      chunk_size=8.0, overlap=2, fade_size=0.1, batch_size=1, intensity=1.0):
+        from pathlib import Path
+        import torchaudio
+
+        in_dir = Path(input_folder.strip())
+        out_dir = Path(output_folder.strip())
+        if not in_dir.exists():
+            raise FileNotFoundError(f"[MelBandRoFormer Batch] Input folder not found: {in_dir}")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        files = sorted(f for f in in_dir.rglob("*") if f.suffix.lower() in _AUDIO_EXTS)
+        if not files:
+            raise RuntimeError(f"[MelBandRoFormer Batch] No audio files found in {in_dir}")
+
+        total = len(files)
+        saved = 0
+        for i, f in enumerate(files):
+            name = f.stem
+            print(f"[MelBandRoFormer Batch] Processing {i + 1}/{total}: {name}", flush=True)
+
+            try:
+                wav, sr = _load_audio(f)
+                audio = {"waveform": wav, "sample_rate": sr}
+                stem1, stem2 = self.process(model, audio, chunk_size, overlap, fade_size, batch_size, intensity)
+
+                for stem, label in [(stem1, "stem1"), (stem2, "stem2")]:
+                    w = stem["waveform"]
+                    if w.dim() == 3:
+                        w = w[0]
+                    torchaudio.save(str(out_dir / f"{name}_{label}.{format}"), w.cpu().float(), stem["sample_rate"])
+
+                saved += 1
+            except Exception as e:
+                print(f"[MelBandRoFormer Batch] Failed {name}: {e}", flush=True)
+
+        report = f"Processed {saved}/{total} files → {out_dir}"
+        print(f"[MelBandRoFormer Batch] {report}", flush=True)
+        return (report,)
+
+
 class MelBandRoFormerDatasetSampler(MelBandRoFormerSampler):
     """Run MelBandRoFormer separation on every clip in a FoleyTune dataset."""
 
@@ -1166,6 +1258,7 @@ NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerDatasetSampler": MelBandRoFormerDatasetSampler,
     "MelBandRoFormerFolderLoader": MelBandRoFormerFolderLoader,
     "MelBandRoFormerDatasetSaver": MelBandRoFormerDatasetSaver,
+    "MelBandRoFormerBatchProcessor": MelBandRoFormerBatchProcessor,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
@@ -1177,4 +1270,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerDatasetSampler": "Mel-Band RoFormer Dataset Sampler",
     "MelBandRoFormerFolderLoader": "Mel-Band RoFormer Folder Loader",
     "MelBandRoFormerDatasetSaver": "Mel-Band RoFormer Dataset Saver",
+    "MelBandRoFormerBatchProcessor": "Mel-Band RoFormer Batch Processor",
 }
