@@ -976,6 +976,117 @@ class MelBandRoFormerLUFSNormalize:
 
 
 FOLEYTUNE_AUDIO_DATASET = "FOLEYTUNE_AUDIO_DATASET"
+_AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".aac", ".m4a", ".aiff", ".aif"}
+_SOUNDFILE_EXTS = {".wav", ".flac", ".ogg"}
+
+
+def _load_audio(path):
+    """Load audio file → ([1, C, L] tensor, sample_rate)."""
+    from pathlib import Path
+    path = Path(path)
+    if path.suffix.lower() in _SOUNDFILE_EXTS:
+        import soundfile as sf
+        wav_np, sr = sf.read(str(path), dtype="float32", always_2d=True)
+        wav = torch.from_numpy(wav_np).T.unsqueeze(0)
+    else:
+        import torchaudio
+        wav, sr = torchaudio.load(str(path))
+        wav = wav.unsqueeze(0).float()
+    return wav, sr
+
+
+class MelBandRoFormerFolderLoader:
+    """Load all audio files from a folder into a dataset for batch processing."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "folder": ("STRING", {
+                    "default": "",
+                    "tooltip": "Absolute path to folder containing audio files.",
+                }),
+            }
+        }
+
+    RETURN_TYPES = (FOLEYTUNE_AUDIO_DATASET,)
+    RETURN_NAMES = ("dataset",)
+    FUNCTION = "load"
+    CATEGORY = "Mel-Band RoFormer"
+    DESCRIPTION = "Load all audio files from a folder for batch separation."
+
+    def load(self, folder):
+        from pathlib import Path
+        folder = Path(folder.strip())
+        if not folder.exists():
+            raise FileNotFoundError(f"[MelBandRoFormer] Folder not found: {folder}")
+
+        files = sorted(f for f in folder.rglob("*") if f.suffix.lower() in _AUDIO_EXTS)
+        if not files:
+            raise RuntimeError(f"[MelBandRoFormer] No audio files found in {folder}")
+
+        dataset = []
+        for f in files:
+            try:
+                wav, sr = _load_audio(f)
+                dataset.append({"waveform": wav, "sample_rate": sr, "name": f.stem})
+            except Exception as e:
+                print(f"[MelBandRoFormer] Skipping {f.name}: {e}", flush=True)
+
+        if not dataset:
+            raise RuntimeError(f"[MelBandRoFormer] All {len(files)} files failed to load")
+
+        print(f"[MelBandRoFormer] Loaded {len(dataset)} clips from {folder}", flush=True)
+        return (dataset,)
+
+
+class MelBandRoFormerDatasetSaver:
+    """Save all clips in a dataset to a folder, preserving original filenames."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "dataset": (FOLEYTUNE_AUDIO_DATASET,),
+                "output_folder": ("STRING", {
+                    "default": "",
+                    "tooltip": "Absolute path to output folder. Created if it doesn't exist.",
+                }),
+                "format": (["flac", "wav"],
+                    {"tooltip": "Output audio format."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("report",)
+    FUNCTION = "save"
+    CATEGORY = "Mel-Band RoFormer"
+    OUTPUT_NODE = True
+    DESCRIPTION = "Save dataset clips to a folder using original filenames."
+
+    def save(self, dataset, output_folder, format="flac"):
+        from pathlib import Path
+        import torchaudio
+
+        out_dir = Path(output_folder.strip())
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        saved = 0
+        for i, item in enumerate(dataset):
+            name = item.get("name", f"clip_{i}")
+            wav = item["waveform"]
+            sr = item["sample_rate"]
+
+            if wav.dim() == 3:
+                wav = wav[0]
+
+            out_path = out_dir / f"{name}.{format}"
+            torchaudio.save(str(out_path), wav.cpu().float(), sr)
+            saved += 1
+
+        report = f"Saved {saved} clips to {out_dir}"
+        print(f"[MelBandRoFormer] {report}", flush=True)
+        return (report,)
 
 
 class MelBandRoFormerDatasetSampler(MelBandRoFormerSampler):
@@ -1053,6 +1164,8 @@ NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerLUFSNormalize": MelBandRoFormerLUFSNormalize,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
     "MelBandRoFormerDatasetSampler": MelBandRoFormerDatasetSampler,
+    "MelBandRoFormerFolderLoader": MelBandRoFormerFolderLoader,
+    "MelBandRoFormerDatasetSaver": MelBandRoFormerDatasetSaver,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerModelLoader": "Mel-Band RoFormer Model Loader",
@@ -1062,4 +1175,6 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerLUFSNormalize": "Mel-Band RoFormer LUFS Normalize",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
     "MelBandRoFormerDatasetSampler": "Mel-Band RoFormer Dataset Sampler",
+    "MelBandRoFormerFolderLoader": "Mel-Band RoFormer Folder Loader",
+    "MelBandRoFormerDatasetSaver": "Mel-Band RoFormer Dataset Saver",
 }
