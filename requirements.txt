@@ -1,5 +1,8 @@
-rotary_embedding_torch
-einops
-huggingface_hub
-BS-RoFormer
-pyloudnorm
+rotary-embedding-torch>=0.8.6,<1
+einops>=0.8,<0.9
+huggingface-hub>=0.34,<2
+# Checkpoints in this node predate the state-dict layout changes in 0.5+.
+BS-RoFormer==0.4.1
+pyloudnorm>=0.2,<0.3
+soundfile>=0.13,<0.15
+matplotlib>=3.8,<4

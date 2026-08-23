@@ -1,13 +1,25 @@
 [project]
 name = "ComfyUI-MelBandRoFormer"
 description = "ComfyUI nodes for Mel-Band RoFormer and BS-RoFormer audio source separation — vocals, instruments, dereverb, denoise, and more"
-version = "1.0.2"
-license = {file = "LICENSE", text = "Apache-2.0"}
-dependencies = ["rotary_embedding_torch", "einops", "huggingface_hub", "BS-RoFormer"]
+version = "1.1.0"
+license = "Apache-2.0"
+dependencies = [
+    "rotary-embedding-torch>=0.8.6,<1",
+    "einops>=0.8,<0.9",
+    "huggingface-hub>=0.34,<2",
+    "BS-RoFormer==0.4.1",
+    "pyloudnorm>=0.2,<0.3",
+    "soundfile>=0.13,<0.15",
+    "matplotlib>=3.8,<4",
+]
 
 [project.urls]
-Repository = "https://github.com/kijai/ComfyUI-MelBandRoFormer"
+Repository = "https://github.com/ethanfel/ComfyUI-MelBandRoFormer"
 #  Used by Comfy Registry https://comfyregistry.org
+
+[tool.setuptools]
+packages = ["comfyui_melband_roformer", "comfyui_melband_roformer.model"]
+package-dir = {"comfyui_melband_roformer" = ".", "comfyui_melband_roformer.model" = "model"}
 
 [tool.comfy]
 PublisherId = "ethanfel"

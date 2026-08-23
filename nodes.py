@@ -1,4 +1,6 @@
 import os
+from importlib.metadata import PackageNotFoundError, version
+
 import torch
 import torch.nn.functional as F
 from tqdm import tqdm
@@ -13,6 +15,11 @@ try:
     _BS_ROFORMER_AVAILABLE = True
 except ImportError:
     _BS_ROFORMER_AVAILABLE = False
+
+try:
+    _BS_ROFORMER_VERSION = version("BS-RoFormer")
+except PackageNotFoundError:
+    _BS_ROFORMER_VERSION = None
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,9 +60,8 @@ _BS_BASE_CONFIG = {
     "ff_dropout": 0,
     "flash_attn": True,
     "dim_freqs_in": 1025,
-    "sample_rate": 44100,
     "stft_n_fft": 2048,
-    "stft_hop_length": 441,
+    "stft_hop_length": 512,
     "stft_win_length": 2048,
     "stft_normalized": False,
     "mask_estimator_depth": 2,
@@ -92,9 +98,11 @@ MODEL_REGISTRY = {
     "Vocals big beta6x (dim=512) · pcunwa":          ("pcunwa/Mel-Band-Roformer-big",                     "big_beta6x.ckpt"),
     "Vocals big beta7 · pcunwa":                     ("pcunwa/Mel-Band-Roformer-big",                     "big_beta7.ckpt"),
     # ── Karaoke (lead-vocal removal) ────────────────────────────────────────
-    "Karaoke · aufr33/viperx ⭐":                    ("jarredou/aufr33-viperx-karaoke-melroformer-model", "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt"),
     "Karaoke · becruily (2-stem)":                   ("becruily/mel-band-roformer-karaoke",               "mel_band_roformer_karaoke_becruily.ckpt"),
     "Karaoke · GaboxR67 V1":                         ("GaboxR67/MelBandRoformers",                        "melbandroformers/karaoke/Karaoke_GaboxV1.ckpt"),
+    # ── Crowd / vocal fullness ──────────────────────────────────────────────
+    "Crowd · aufr33/viperx ⭐ (SDR 8.71)":           ("cdjmix1991/mel-band-roformer-crowd",               "mel_band_roformer_crowd_aufr33_viperx_sdr_8.7144.ckpt"),
+    "Vocals fullness · Aname-Tommy":                 ("Aname-Tommy/MelBandRoformers",                     "FullnessVocalModel.ckpt"),
     # ── Vocals + Instrumental 2-stem ────────────────────────────────────────
     "Vocals+Instrumental 2-stem · becruily":         ("becruily/mel-band-roformer-deux",                  "becruily_deux.ckpt"),
     # ── 4-stem (vocals, drums, bass, other) ─────────────────────────────────
@@ -123,7 +131,13 @@ MODEL_REGISTRY = {
     "[BS] Dereverb · anvuew ⭐ (SDR 22.51)":         ("anvuew/deverb_bs_roformer",                        "dereverb_bs_roformer_anvuew_sdr_22.5050.ckpt"),
 }
 
-_ACK_FILE = os.path.join(folder_paths.get_folder_paths("MelBandRoFormer")[0], ".ckpt_risk_acknowledged")
+
+# Architecture values that cannot be recovered from tensor shapes alone.
+_MODEL_CONFIG_OVERRIDES = {
+    "[BS] Vocals revive v3e ⭐ · pcunwa": {"stft_hop_length": 441},
+    "[BS] Vocals revive v2 · pcunwa": {"stft_hop_length": 441},
+    "[BS] Vocals revive v1 · pcunwa": {"stft_hop_length": 441},
+}
 
 # Latest/best model from each series — shown in the curated loader node.
 # Older versions that are superseded are excluded (Kim FT v1, GaboxR67 fv6, etc.)
@@ -143,9 +157,11 @@ _LATEST_MODEL_NAMES = frozenset({
     "Vocals big beta6 (dim=512) · pcunwa ⭐",
     "Vocals big beta7 · pcunwa",
     # Karaoke
-    "Karaoke · aufr33/viperx ⭐",
     "Karaoke · becruily (2-stem)",
     "Karaoke · GaboxR67 V1",
+    # Crowd / fullness
+    "Crowd · aufr33/viperx ⭐ (SDR 8.71)",
+    "Vocals fullness · Aname-Tommy",
     # 2-stem direct
     "Vocals+Instrumental 2-stem · becruily",
     # 4-stem
@@ -171,17 +187,8 @@ _LATEST_MODEL_NAMES = frozenset({
 })
 
 
-def _ckpt_acknowledged():
-    return os.path.exists(_ACK_FILE)
-
-
-def _save_ckpt_ack():
-    with open(_ACK_FILE, "w") as f:
-        f.write("acknowledged")
-
-
 # Basenames of every file managed by the registry.
-# Used to suppress local duplicates: if a model was downloaded via [HF],
+# Used to suppress local duplicates: if a model was downloaded from the registry,
 # its bare filename is hidden from the local list so it only appears once.
 _REGISTRY_FILENAMES = frozenset(
     os.path.basename(filename) for _, filename in MODEL_REGISTRY.values()
@@ -197,7 +204,7 @@ def _manual_local_choices():
     Filters out:
     - Non-model files (.metadata, .json, .ckpt_risk_acknowledged, etc.)
     - Hidden files / dotfiles
-    - Files whose basename matches a registry entry (already shown as [HF])
+    - Files whose basename matches a registry entry (already shown by display name)
     """
     result = []
     for f in folder_paths.get_filename_list("MelBandRoFormer"):
@@ -242,7 +249,7 @@ def _detect_model_type(sd):
 
 
 def _infer_shared_params(sd, config):
-    """Fill dim, depth, num_stems, transformer depths, mask_estimator_depth — shared logic."""
+    """Fill architecture parameters shared by MelBand and BS checkpoints."""
     config["dim"] = sd["band_split.to_features.0.1.weight"].shape[0]
     config["depth"] = max(int(k.split('.')[1]) for k in sd if k.startswith('layers.')) + 1
     config["num_stems"] = max(int(k.split('.')[1]) for k in sd if k.startswith('mask_estimators.')) + 1
@@ -253,15 +260,24 @@ def _infer_shared_params(sd, config):
     freq_keys = [k for k in sd if k.startswith('layers.0.1.layers.')]
     config["freq_transformer_depth"] = max(int(k.split('.')[4]) for k in freq_keys) + 1 if freq_keys else 1
 
-    mlp_keys = [k for k in sd if k.startswith('mask_estimators.0.to_freqs.0.0.') and k.endswith('.weight')]
-    if mlp_keys:
-        config["mask_estimator_depth"] = max(int(k.split('.')[5]) for k in mlp_keys) // 2
+
+
+def _mask_estimator_last_linear(sd):
+    keys = [
+        k for k in sd
+        if k.startswith('mask_estimators.0.to_freqs.0.0.') and k.endswith('.weight')
+    ]
+    return max((int(k.split('.')[5]) for k in keys), default=None)
 
 
 def infer_melband_config(sd):
     """Auto-detect MelBandRoformer architecture from state dict."""
     config = dict(_MELBAND_BASE_CONFIG)
     _infer_shared_params(sd, config)
+    last_linear = _mask_estimator_last_linear(sd)
+    if last_linear is not None:
+        # The bundled Mel implementation stores `depth + 1` linear layers.
+        config["mask_estimator_depth"] = last_linear // 2
     return config
 
 
@@ -273,15 +289,37 @@ def infer_bs_roformer_config(sd):
     # Reconstruct freqs_per_bands from the band_split input layer shapes.
     # Each band N: band_split.to_features.N.1.weight shape = [dim, 2 * freqs[N] * channels]
     band_keys = sorted(
-        (int(k.split('.')[3]), k)
+        (int(k.split('.')[2]), k)
         for k in sd
         if k.startswith('band_split.to_features.') and k.endswith('.1.weight')
     )
-    # Detect stereo: input divisible by 4 (2 complex × 2 ch) vs 2 (2 complex × 1 ch)
-    first_input = sd[band_keys[0][1]].shape[1]
-    divisor = 4 if first_input % 4 == 0 else 2
+
+    if not band_keys:
+        raise ValueError("BS-RoFormer checkpoint has no band-split input weights")
+
+    # A BS checkpoint covers every STFT bin exactly once. Inspecting a single
+    # band is ambiguous because mono band widths can also be divisible by four.
+    total_input = sum(sd[k].shape[1] for _, k in band_keys)
+    stereo_input = 4 * config["dim_freqs_in"]  # real+imag × 2 channels
+    mono_input = 2 * config["dim_freqs_in"]    # real+imag × 1 channel
+    if total_input == stereo_input:
+        divisor = 4
+    elif total_input == mono_input:
+        divisor = 2
+    else:
+        raise ValueError(
+            "Unsupported BS-RoFormer band layout: "
+            f"band inputs total {total_input}, expected {mono_input} (mono) "
+            f"or {stereo_input} (stereo)"
+        )
+
     config["stereo"] = (divisor == 4)
     config["freqs_per_bands"] = tuple(sd[k].shape[1] // divisor for _, k in band_keys)
+
+    last_linear = _mask_estimator_last_linear(sd)
+    if last_linear is not None:
+        # BS-RoFormer 0.4.x stores exactly `depth` linear layers.
+        config["mask_estimator_depth"] = last_linear // 2 + 1
 
     return config
 
@@ -342,6 +380,19 @@ def get_windowing_array(window_size, fade_size, device):
     return window.to(device)
 
 
+def _concat_audio_batch(items):
+    """Combine single-item ComfyUI AUDIO dictionaries into one AUDIO batch."""
+    if not items:
+        raise ValueError("Cannot combine an empty audio batch")
+    sample_rate = items[0]["sample_rate"]
+    if any(item["sample_rate"] != sample_rate for item in items):
+        raise ValueError("All items in an AUDIO batch must use the same sample rate")
+    return {
+        "waveform": torch.cat([item["waveform"] for item in items], dim=0),
+        "sample_rate": sample_rate,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Nodes
 # ---------------------------------------------------------------------------
@@ -360,17 +411,6 @@ class MelBandRoFormerModelLoader:
                         ),
                     },
                 ),
-                "acknowledge_ckpt_risk": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": (
-                        "Most models use the .ckpt format, which is based on Python pickle. "
-                        "Pickle can execute arbitrary code when loaded — a malicious .ckpt file "
-                        "could run anything on your machine. All models in this registry come from "
-                        "known, trusted authors on HuggingFace, so the practical risk is low. "
-                        "Check this box to confirm you understand and accept this risk. "
-                        "Your acknowledgment is saved to disk and won't be asked again."
-                    ),
-                }),
             },
         }
 
@@ -379,28 +419,18 @@ class MelBandRoFormerModelLoader:
     FUNCTION = "loadmodel"
     CATEGORY = "Mel-Band RoFormer"
 
-    def loadmodel(self, model_name, acknowledge_ckpt_risk=False):
+    def loadmodel(self, model_name):
         if model_name in MODEL_REGISTRY:
             repo_id, filename = MODEL_REGISTRY[model_name]
-            if filename.endswith(".ckpt") and not _ckpt_acknowledged():
-                if not acknowledge_ckpt_risk:
-                    raise ValueError(
-                        "[MelBandRoFormer] This model uses the .ckpt format, which is based on Python pickle.\n"
-                        "Pickle files can execute arbitrary code when loaded — a malicious .ckpt could run "
-                        "anything on your machine.\n"
-                        "The models in this registry come from known, trusted authors on HuggingFace, "
-                        "so the practical risk is low, but you should be aware of it.\n\n"
-                        "To proceed: check the 'acknowledge_ckpt_risk' box on the Loader node and run again. "
-                        "Your acknowledgment will be saved and you won't be asked again."
-                    )
-                _save_ckpt_ack()
-                print("[MelBandRoFormer] .ckpt risk acknowledged and saved.")
             model_path = download_hf_model(repo_id, filename)
         else:
             model_path = folder_paths.get_full_path_or_raise("MelBandRoFormer", model_name)
 
-        sd = load_torch_file(model_path)
+        # Registry checkpoints contain plain tensor state dicts. Enforce
+        # weights-only loading so .ckpt files are never unpickled unsafely.
+        sd = load_torch_file(model_path, safe_load=True)
         model_type, config = infer_config(sd)
+        config.update(_MODEL_CONFIG_OVERRIDES.get(model_name, {}))
         print(f"[MelBandRoFormer] Detected {model_type}: dim={config['dim']}, depth={config['depth']}, "
               f"num_stems={config['num_stems']}, time_depth={config['time_transformer_depth']}, "
               f"freq_depth={config['freq_transformer_depth']}")
@@ -409,7 +439,13 @@ class MelBandRoFormerModelLoader:
             if not _BS_ROFORMER_AVAILABLE:
                 raise ImportError(
                     "BS-RoFormer model requires the bs_roformer package. "
-                    "Install with:  pip install BS-RoFormer"
+                    "Install with:  pip install BS-RoFormer==0.4.1"
+                )
+            if _BS_ROFORMER_VERSION != "0.4.1":
+                raise ImportError(
+                    "These BS-RoFormer checkpoints require BS-RoFormer==0.4.1; "
+                    f"found {_BS_ROFORMER_VERSION or 'an unknown version'}. "
+                    "Newer releases use an incompatible state-dict layout."
                 )
             model = BSRoformer(**config).eval()
         else:
@@ -460,13 +496,46 @@ class MelBandRoFormerSampler:
         audio_input = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
+        if audio_input.ndim != 3:
+            raise ValueError(
+                "ComfyUI AUDIO waveform must have shape [batch, channels, samples], "
+                f"got {tuple(audio_input.shape)}"
+            )
+
+        # `batch_size` controls inference chunks. The AUDIO batch dimension is
+        # independent and every clip must be preserved.
+        if audio_input.shape[0] > 1:
+            separated = [
+                self.process(
+                    model,
+                    {"waveform": audio_input[i:i + 1], "sample_rate": sample_rate},
+                    chunk_size,
+                    overlap,
+                    fade_size,
+                    batch_size,
+                    intensity,
+                )
+                for i in range(audio_input.shape[0])
+            ]
+            return tuple(
+                _concat_audio_batch([item[stem_index] for item in separated])
+                for stem_index in range(2)
+            )
+
         B, audio_channels, audio_length = audio_input.shape
         sr = 44100
 
-        if audio_channels == 1:
+        expects_stereo = getattr(model, "stereo", True)
+        if expects_stereo and audio_channels == 1:
             audio_input = audio_input.repeat(1, 2, 1)
             audio_channels = 2
             print("[MelBandRoFormer] Converted mono input to stereo.")
+        elif expects_stereo and audio_channels != 2:
+            raise ValueError(f"Stereo models require one or two input channels, got {audio_channels}")
+        elif not expects_stereo and audio_channels != 1:
+            audio_input = audio_input.mean(dim=1, keepdim=True)
+            audio_channels = 1
+            print("[MelBandRoFormer] Downmixed input for a mono model.")
 
         if sample_rate != sr:
             print(f"[MelBandRoFormer] Resampling {sample_rate} → {sr}")
@@ -566,11 +635,15 @@ class MelBandRoFormerSampler:
 
 
 def _audio_to_mono(audio):
-    """Return (mono_wav [T], sample_rate) from a ComfyUI AUDIO dict."""
+    """Return (mono_wavs [B, T], sample_rate) from a ComfyUI AUDIO dict."""
     waveform = audio["waveform"]  # [B, C, T]
     sr = audio["sample_rate"]
-    wav = waveform[0].mean(0).cpu().float()  # [T]
-    return wav, sr
+    if waveform.ndim != 3:
+        raise ValueError(
+            "ComfyUI AUDIO waveform must have shape [batch, channels, samples], "
+            f"got {tuple(waveform.shape)}"
+        )
+    return waveform.mean(dim=1).cpu().float(), sr  # [B, T]
 
 
 _DB_FLOOR = -80.0     # dB floor — bins below this relative to peak are black
@@ -740,22 +813,33 @@ class MelBandRoFormerSpectrogram:
     def compare(self, audio_a, audio_b, label_a, label_b, mode, n_fft, hop_length):
         sr_target = 44100
 
-        wav_a, sr_a = _audio_to_mono(audio_a)
-        wav_b, sr_b = _audio_to_mono(audio_b)
+        wavs_a, sr_a = _audio_to_mono(audio_a)
+        wavs_b, sr_b = _audio_to_mono(audio_b)
 
-        if sr_a != sr_target:
-            wav_a = TAF.resample(wav_a.unsqueeze(0), sr_a, sr_target).squeeze(0)
-        if sr_b != sr_target:
-            wav_b = TAF.resample(wav_b.unsqueeze(0), sr_b, sr_target).squeeze(0)
+        batch_a, batch_b = wavs_a.shape[0], wavs_b.shape[0]
+        if batch_a != batch_b:
+            if batch_a == 1:
+                wavs_a = wavs_a.expand(batch_b, -1)
+            elif batch_b == 1:
+                wavs_b = wavs_b.expand(batch_a, -1)
+            else:
+                raise ValueError(
+                    f"Spectrogram AUDIO batches must match or one must be size 1, got {batch_a} and {batch_b}"
+                )
 
-        spec_a = _db_spectrogram(wav_a, n_fft, hop_length)
-        spec_b = _db_spectrogram(wav_b, n_fft, hop_length)
+        images = []
+        for wav_a, wav_b in zip(wavs_a, wavs_b):
+            if sr_a != sr_target:
+                wav_a = TAF.resample(wav_a.unsqueeze(0), sr_a, sr_target).squeeze(0)
+            if sr_b != sr_target:
+                wav_b = TAF.resample(wav_b.unsqueeze(0), sr_b, sr_target).squeeze(0)
 
-        img = _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=sr_target)
+            spec_a = _db_spectrogram(wav_a, n_fft, hop_length)
+            spec_b = _db_spectrogram(wav_b, n_fft, hop_length)
+            image = _render_figure(spec_a, spec_b, label_a, label_b, mode, n_fft, sr=sr_target)
+            images.append(torch.from_numpy(image).float() / 255.0)
 
-        img_tensor = torch.from_numpy(img).float() / 255.0  # [H, W, 3]
-        img_tensor = img_tensor.unsqueeze(0)                 # [1, H, W, 3]
-        return (img_tensor,)
+        return (torch.stack(images, dim=0),)
 
 
 class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
@@ -776,17 +860,6 @@ class MelBandRoFormerModelLoaderLatest(MelBandRoFormerModelLoader):
                         ),
                     },
                 ),
-                "acknowledge_ckpt_risk": ("BOOLEAN", {
-                    "default": False,
-                    "tooltip": (
-                        "Most models use the .ckpt format, which is based on Python pickle. "
-                        "Pickle can execute arbitrary code when loaded — a malicious .ckpt file "
-                        "could run anything on your machine. All models in this registry come from "
-                        "known, trusted authors on HuggingFace, so the practical risk is low. "
-                        "Check this box to confirm you understand and accept this risk. "
-                        "Your acknowledgment is saved to disk and won't be asked again."
-                    ),
-                }),
             },
         }
 
@@ -813,11 +886,15 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         sr = stems[0]["sample_rate"]
         length = stems[0]["waveform"].shape[-1]
         channels = stems[0]["waveform"].shape[1]
+        audio_batch = stems[0]["waveform"].shape[0]
 
         def _get(idx):
             if idx < len(stems):
                 return stems[idx]
-            return {"waveform": torch.zeros(1, channels, length), "sample_rate": sr}
+            return {
+                "waveform": stems[0]["waveform"].new_zeros(audio_batch, channels, length),
+                "sample_rate": sr,
+            }
 
         return (_get(0), _get(1), _get(2), _get(3))
 
@@ -826,12 +903,43 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         audio_input = audio["waveform"]
         sample_rate = audio["sample_rate"]
 
+        if audio_input.ndim != 3:
+            raise ValueError(
+                "ComfyUI AUDIO waveform must have shape [batch, channels, samples], "
+                f"got {tuple(audio_input.shape)}"
+            )
+
+        if audio_input.shape[0] > 1:
+            separated = [
+                self._process_all(
+                    model,
+                    {"waveform": audio_input[i:i + 1], "sample_rate": sample_rate},
+                    chunk_size,
+                    overlap,
+                    fade_size,
+                    batch_size,
+                    intensity,
+                )
+                for i in range(audio_input.shape[0])
+            ]
+            stem_count = len(separated[0])
+            return [
+                _concat_audio_batch([item[stem_index] for item in separated])
+                for stem_index in range(stem_count)
+            ]
+
         B, audio_channels, audio_length = audio_input.shape
         sr = 44100
 
-        if audio_channels == 1:
+        expects_stereo = getattr(model, "stereo", True)
+        if expects_stereo and audio_channels == 1:
             audio_input = audio_input.repeat(1, 2, 1)
             audio_channels = 2
+        elif expects_stereo and audio_channels != 2:
+            raise ValueError(f"Stereo models require one or two input channels, got {audio_channels}")
+        elif not expects_stereo and audio_channels != 1:
+            audio_input = audio_input.mean(dim=1, keepdim=True)
+            audio_channels = 1
 
         if sample_rate != sr:
             audio_input = TAF.resample(audio_input, orig_freq=sample_rate, new_freq=sr)
@@ -953,35 +1061,53 @@ class MelBandRoFormerLUFSNormalize:
 
         waveform = audio["waveform"]   # [B, C, T]
         sr = audio["sample_rate"]
-
-        wav = waveform[0].cpu().float()   # [C, T]
-        np_wav = wav.numpy().T            # [T, C] as pyloudnorm expects
+        if waveform.ndim != 3 or waveform.shape[0] == 0:
+            raise ValueError(
+                "ComfyUI AUDIO waveform must have non-empty shape [batch, channels, samples], "
+                f"got {tuple(waveform.shape)}"
+            )
 
         meter = pyln.Meter(sr)
-        input_lufs = meter.integrated_loudness(np_wav)
-
-        if input_lufs == float("-inf"):
-            print("[MelBandRoFormer] LUFS Normalize: input is silent, skipping.")
-            return (audio, float("-inf"), 0.0)
-
-        gain_db = target_lufs - input_lufs
         peak_limit_linear = 10 ** (peak_limit_db / 20.0)
+        normalized_batch = []
+        input_values = []
+        gain_values = []
 
-        gain_linear = 10 ** (gain_db / 20.0)
-        normalized = wav * gain_linear
+        for batch_index, wav in enumerate(waveform.cpu().float()):
+            input_lufs = meter.integrated_loudness(wav.numpy().T)
+            if input_lufs == float("-inf"):
+                print(f"[MelBandRoFormer] LUFS Normalize: batch item {batch_index} is silent, skipping.")
+                normalized_batch.append(wav)
+                gain_values.append(0.0)
+                continue
 
-        # Clamp to peak limit
-        peak = normalized.abs().max().item()
-        if peak > peak_limit_linear:
-            clamp_gain = peak_limit_linear / peak
-            normalized = normalized * clamp_gain
-            gain_db += 20.0 * torch.log10(torch.tensor(clamp_gain)).item()
-            print(f"[MelBandRoFormer] LUFS Normalize: peak clamped by {20.0 * (clamp_gain - 1):.2f} dB")
+            gain_db = target_lufs - input_lufs
+            normalized = wav * (10 ** (gain_db / 20.0))
 
-        print(f"[MelBandRoFormer] LUFS Normalize: {input_lufs:.1f} → {target_lufs:.1f} LUFS  (gain {gain_db:+.1f} dB)")
+            peak = normalized.abs().max().item()
+            if peak > peak_limit_linear:
+                clamp_gain = peak_limit_linear / peak
+                normalized = normalized * clamp_gain
+                clamp_db = 20.0 * torch.log10(torch.tensor(clamp_gain)).item()
+                gain_db += clamp_db
+                print(
+                    f"[MelBandRoFormer] LUFS Normalize: batch item {batch_index} "
+                    f"peak clamped by {clamp_db:.2f} dB"
+                )
 
-        out = {"waveform": normalized.unsqueeze(0), "sample_rate": sr}
-        return (out, round(input_lufs, 2), round(gain_db, 2))
+            normalized_batch.append(normalized)
+            input_values.append(float(input_lufs))
+            gain_values.append(float(gain_db))
+
+        reported_input = sum(input_values) / len(input_values) if input_values else float("-inf")
+        reported_gain = sum(gain_values) / len(gain_values)
+        print(
+            f"[MelBandRoFormer] LUFS Normalize: processed {waveform.shape[0]} item(s) "
+            f"(mean gain {reported_gain:+.1f} dB)"
+        )
+
+        out = {"waveform": torch.stack(normalized_batch, dim=0), "sample_rate": sr}
+        return (out, round(reported_input, 2), round(reported_gain, 2))
 
 
 FOLEYTUNE_AUDIO_DATASET = "FOLEYTUNE_AUDIO_DATASET"

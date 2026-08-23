@@ -21,13 +21,13 @@ Search for **ComfyUI-MelBandRoFormer** in the Manager and install.
 ```bash
 cd ComfyUI/custom_nodes
 git clone https://github.com/ethanfel/ComfyUI-MelBandRoFormer
-pip install huggingface_hub
+pip install -r ComfyUI-MelBandRoFormer/requirements.txt
 ```
 
 ### Models
 Models are stored in `ComfyUI/models/MelBandRoFormer/` (created automatically on first run).
 
-**You don't need to download anything manually.** In the loader node, any entry starting with `[HF]` downloads automatically from HuggingFace the first time you run it, then loads from disk on subsequent runs.
+**You don't need to download anything manually.** Registry entries download automatically from HuggingFace the first time you run them, then load from disk on subsequent runs.
 
 To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file into `ComfyUI/models/MelBandRoFormer/` and it will appear at the top of the dropdown.
 
@@ -41,7 +41,9 @@ To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file 
 | Extract vocals with minimal instrument bleed | **Vocals · Kim FT v2 bleedless** |
 | Best vocal quality, BS-RoFormer architecture | **[BS] Vocals revive v3e · pcunwa** |
 | Extract the instrumental / backing track | **Instrumental · GaboxR67 INSTV6 ⭐** |
-| Make a karaoke track (remove lead vocal) | **Karaoke · aufr33/viperx ⭐** |
+| Make a karaoke track (remove lead vocal) | **Karaoke · becruily (2-stem)** |
+| Isolate crowd/room participation | **Crowd · aufr33/viperx ⭐** |
+| Restore vocal fullness/body | **Vocals fullness · Aname-Tommy** |
 | Remove room reverb from a recording | **[BS] Dereverb · anvuew (SDR 22.51)** |
 | Denoise a recording | **Denoise · aufr33 ⭐** |
 | Isolate breath / mouth sounds | **Aspiration · Sucial ⭐** |
@@ -59,8 +61,7 @@ Curated loader showing only the latest or best model from each series. Supersede
 
 | Input | Description |
 |---|---|
-| `model_name` | Local files first, then curated `[HF]` entries. One winner per model family. |
-| `acknowledge_ckpt_risk` | Must be checked once before downloading `.ckpt` models. See [Security note](#security-note) below. |
+| `model_name` | Local files first, then curated registry entries. One winner per model family. |
 
 ---
 
@@ -70,14 +71,13 @@ Full loader — every model in the registry, including older versions. Use this 
 
 | Input | Description |
 |---|---|
-| `model_name` | Local files first, then all `[HF]` entries. |
-| `acknowledge_ckpt_risk` | Must be checked once before downloading `.ckpt` models. |
+| `model_name` | Local files first, then all registry entries. |
 
 Both loaders automatically detect whether the checkpoint is **Mel-Band RoFormer** or **BS-RoFormer** and instantiate the correct architecture. No configuration needed. **Output:** `MELROFORMERMODEL` — connect to the Sampler.
 
 #### Security note
 
-Most models use the `.ckpt` format, which is based on Python pickle. Pickle can execute arbitrary code when a file is loaded. All models in this registry come from known, trusted authors on HuggingFace, so the practical risk is low — but you should be aware of it. Check `acknowledge_ckpt_risk` to confirm you understand. Your acknowledgment is saved to disk and will not be asked again.
+Most models use the `.ckpt` extension. The loader forces ComfyUI's weights-only safe-loading path, so registry checkpoints are read as tensor state dictionaries without allowing arbitrary pickle objects.
 
 ---
 
@@ -99,7 +99,9 @@ Runs the separation and returns two audio streams.
 | `stem_1` | The primary separated audio (e.g. vocals for a vocal model, dry signal for a dereverb model). |
 | `stem_2` | The residual (original minus stem_1) for single-stem models, or the second stem for two-stem models (karaoke, aspiration). |
 
-> **4-stem models:** Only `stem_1` (vocals) and `stem_2` (drums) are output. Stems 3 and 4 (bass, other) are discarded with a console warning.
+For four-stem models, use **Mel-Band RoFormer Sampler (4-stem)** to receive vocals, drums, bass, and other. The regular sampler intentionally exposes only its first two outputs.
+
+Both sampler nodes preserve ComfyUI's `AUDIO` batch dimension. The `batch_size` control is separate: it sets how many overlapping inference chunks are processed together.
 
 ---
 
@@ -186,9 +188,19 @@ Remove the lead vocal while keeping backing vocals and instruments.
 
 | Model | SDR | Notes | Quality |
 |---|---|---|---|
-| **Karaoke · aufr33/viperx** | 10.20 | The standard karaoke model, widely used and validated | ⭐⭐⭐⭐⭐ Best overall |
-| **Karaoke · becruily (2-stem)** | — | 2-stem model: stem_1 = vocals, stem_2 = karaoke directly | ⭐⭐⭐⭐ |
+| **Karaoke · becruily (2-stem)** | — | 2-stem model: stem_1 = vocals, stem_2 = karaoke directly | ⭐⭐⭐⭐⭐ Best overall |
 | **Karaoke · GaboxR67 V1** | — | Community alternative | ⭐⭐⭐ |
+
+The former aufr33/viperx registry entry was removed because its HuggingFace repository is no longer publicly accessible.
+
+---
+
+### Crowd / Vocal Fullness
+
+| Model | SDR | Notes |
+|---|---:|---|
+| **Crowd · aufr33/viperx** | 8.71 | Isolates crowd and audience participation from a mix |
+| **Vocals fullness · Aname-Tommy** | — | Extracts/restores the body or fullness component of vocals |
 
 ---
 
@@ -208,7 +220,7 @@ Models that output both vocals and instrumental simultaneously rather than compu
 
 Separates audio into vocals, drums, bass, and other simultaneously.
 
-> **Note:** The current sampler node only outputs `stem_1` (vocals) and `stem_2` (drums). Bass and other are discarded. Full 4-stem support is planned.
+Use **Mel-Band RoFormer Sampler (4-stem)** for all four outputs. Output order is vocals, drums, bass, other for these checkpoints.
 
 | Model | Size | Notes | Quality |
 |---|---|---|---|
@@ -293,9 +305,9 @@ You can connect the output of one Sampler into a second Sampler for two-stage pr
 
 ### Audio Format
 
-- Mono inputs are automatically duplicated to stereo before processing.
+- Mono inputs are duplicated for stereo checkpoints; true mono checkpoints downmix multi-channel input.
 - Audio at sample rates other than 44100 Hz is automatically resampled.
-- Output is always at 44100 Hz.
+- Models run internally at 44100 Hz; output is resampled back to the input sample rate.
 
 ---
 
@@ -315,12 +327,12 @@ You can connect the output of one Sampler into a second Sampler for two-stage pr
 | Author | Models |
 |---|---|
 | **[pcunwa](https://huggingface.co/pcunwa)** | Kim FT finetuned variants, Inst v1/v2, big beta series, BS-RoFormer Revive series |
-| **[aufr33](https://huggingface.co/poiqazwsx/melband-roformer-denoise) & [viperx](https://huggingface.co/jarredou/aufr33-viperx-karaoke-melroformer-model)** | Karaoke model, denoise models |
+| **[aufr33](https://huggingface.co/poiqazwsx/melband-roformer-denoise) & viperx** | Crowd and denoise models |
 | **[Sucial](https://huggingface.co/Sucial)** | Dereverb+Echo models, Aspiration models |
 | **[becruily](https://huggingface.co/becruily)** | Vocals, instrumental, karaoke, deux (2-stem) |
 | **[anvuew](https://huggingface.co/anvuew)** | High-SDR MelBand dereverb models + BS-RoFormer dereverb (SDR 22.51) |
 | **[GaboxR67](https://huggingface.co/GaboxR67/MelBandRoformers)** | Extensive community vocal, instrumental, karaoke variants |
-| **[Aname-Tommy](https://huggingface.co/Aname-Tommy/melbandroformer4stems)** | 4-stem large and XL models |
+| **[Aname-Tommy](https://huggingface.co/Aname-Tommy)** | 4-stem large/XL and vocal-fullness models |
 
 ### This Node
 Originally forked from [kijai/ComfyUI-MelRoFormer](https://github.com/kijai/ComfyUI-MelRoFormer). Extended with multi-model support, HuggingFace auto-download, architecture auto-detection, batched inference, and multi-stem output by [ethanfel](https://github.com/ethanfel).
