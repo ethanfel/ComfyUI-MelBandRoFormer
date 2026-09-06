@@ -24,6 +24,8 @@ git clone https://github.com/ethanfel/ComfyUI-MelBandRoFormer
 pip install -r ComfyUI-MelBandRoFormer/requirements.txt
 ```
 
+Dependencies specify minimum versions without exact pins or upper bounds. Both model architectures are bundled, so the node does not require the `BS-RoFormer` package.
+
 ### Models
 Models are stored in `ComfyUI/models/MelBandRoFormer/` (created automatically on first run).
 
@@ -321,7 +323,7 @@ You can connect the output of one Sampler into a second Sampler for two-stage pr
 - **[KimberleyJensen](https://github.com/KimberleyJensen/Mel-Band-Roformer-Vocal-Model)** — original vocal model implementation and checkpoint
 - **[Kijai](https://huggingface.co/Kijai/MelBandRoFormer_comfy)** — ComfyUI-optimized safetensors (fp16/fp32)
 - **[ZFTurbo](https://github.com/ZFTurbo/Music-Source-Separation-Training)** — training framework used by most models in this registry
-- **[lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer)** — BS-RoFormer PyPI package used for BS-RoFormer inference
+- **[lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer)** — the bundled BS-RoFormer inference implementation is adapted from version 0.4.1 (MIT license) for checkpoint compatibility
 
 ### Model Authors
 | Author | Models |

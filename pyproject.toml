@@ -4,13 +4,12 @@ description = "ComfyUI nodes for Mel-Band RoFormer and BS-RoFormer audio source 
 version = "1.1.0"
 license = "Apache-2.0"
 dependencies = [
-    "rotary-embedding-torch>=0.8.6,<1",
-    "einops>=0.8,<0.9",
-    "huggingface-hub>=0.34,<2",
-    "BS-RoFormer==0.4.1",
-    "pyloudnorm>=0.2,<0.3",
-    "soundfile>=0.13,<0.15",
-    "matplotlib>=3.8,<4",
+    "rotary-embedding-torch>=0.8.6",
+    "einops>=0.8",
+    "huggingface-hub>=0.34",
+    "pyloudnorm>=0.2",
+    "soundfile>=0.13",
+    "matplotlib>=3.8",
 ]
 
 [project.urls]

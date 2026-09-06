@@ -95,7 +95,11 @@ def test_mel_and_bs_mask_depth_semantics_differ(nodes_module):
     assert nodes_module.infer_bs_roformer_config(state)["mask_estimator_depth"] == 2
 
 
-def test_loader_enforces_weights_only_safe_loading(nodes_module, monkeypatch):
+@pytest.mark.parametrize("model_type, model_class", [
+    ("melband", "MelBandRoformer"),
+    ("bsroformer", "BSRoformer"),
+])
+def test_loader_enforces_weights_only_safe_loading(nodes_module, monkeypatch, model_type, model_class):
     seen = {}
 
     class DummyModel:
@@ -119,8 +123,8 @@ def test_loader_enforces_weights_only_safe_loading(nodes_module, monkeypatch):
         "freq_transformer_depth": 1,
     }
     monkeypatch.setattr(nodes_module, "load_torch_file", fake_load)
-    monkeypatch.setattr(nodes_module, "infer_config", lambda _state: ("melband", config))
-    monkeypatch.setattr(nodes_module, "MelBandRoformer", lambda **_config: DummyModel())
+    monkeypatch.setattr(nodes_module, "infer_config", lambda _state: (model_type, config))
+    monkeypatch.setattr(nodes_module, model_class, lambda **_config: DummyModel())
 
     nodes_module.MelBandRoFormerModelLoader().loadmodel("local.ckpt")
 
@@ -253,6 +257,10 @@ def test_package_metadata_is_buildable_and_complete():
 
     assert project["license"] == "Apache-2.0"
     assert project["urls"]["Repository"] == "https://github.com/ethanfel/ComfyUI-MelBandRoFormer"
-    assert "BS-RoFormer==0.4.1" in project["dependencies"]
+    requirements = [
+        line.strip() for line in (ROOT / "requirements.txt").read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert project["dependencies"] == requirements
     for package in ("pyloudnorm", "soundfile", "matplotlib"):
         assert any(dependency.startswith(package) for dependency in project["dependencies"])

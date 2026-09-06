@@ -1,5 +1,4 @@
 import os
-from importlib.metadata import PackageNotFoundError, version
 
 import torch
 import torch.nn.functional as F
@@ -9,17 +8,7 @@ import torchaudio.functional as TAF
 import folder_paths
 
 from .model.mel_band_roformer import MelBandRoformer
-
-try:
-    from bs_roformer import BSRoformer
-    _BS_ROFORMER_AVAILABLE = True
-except ImportError:
-    _BS_ROFORMER_AVAILABLE = False
-
-try:
-    _BS_ROFORMER_VERSION = version("BS-RoFormer")
-except PackageNotFoundError:
-    _BS_ROFORMER_VERSION = None
+from .model.bs_roformer import BSRoformer
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
@@ -65,10 +54,6 @@ _BS_BASE_CONFIG = {
     "stft_win_length": 2048,
     "stft_normalized": False,
     "mask_estimator_depth": 2,
-    "multi_stft_resolution_loss_weight": 1.0,
-    "multi_stft_resolutions_window_sizes": (4096, 2048, 1024, 512, 256),
-    "multi_stft_hop_size": 147,
-    "multi_stft_normalized": False,
 }
 
 # ---------------------------------------------------------------------------
@@ -318,7 +303,7 @@ def infer_bs_roformer_config(sd):
 
     last_linear = _mask_estimator_last_linear(sd)
     if last_linear is not None:
-        # BS-RoFormer 0.4.x stores exactly `depth` linear layers.
+        # The bundled BS implementation stores exactly `depth` linear layers.
         config["mask_estimator_depth"] = last_linear // 2 + 1
 
     return config
@@ -436,17 +421,6 @@ class MelBandRoFormerModelLoader:
               f"freq_depth={config['freq_transformer_depth']}")
 
         if model_type == 'bsroformer':
-            if not _BS_ROFORMER_AVAILABLE:
-                raise ImportError(
-                    "BS-RoFormer model requires the bs_roformer package. "
-                    "Install with:  pip install BS-RoFormer==0.4.1"
-                )
-            if _BS_ROFORMER_VERSION != "0.4.1":
-                raise ImportError(
-                    "These BS-RoFormer checkpoints require BS-RoFormer==0.4.1; "
-                    f"found {_BS_ROFORMER_VERSION or 'an unknown version'}. "
-                    "Newer releases use an incompatible state-dict layout."
-                )
             model = BSRoformer(**config).eval()
         else:
             model = MelBandRoformer(**config).eval()

@@ -11,6 +11,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="session")
+def bs_model_class():
+    """Import the real architecture separately from the node API test stubs."""
+    package = types.ModuleType("melband_architecture")
+    package.__path__ = [str(ROOT / "model")]
+    sys.modules[package.__name__] = package
+    return importlib.import_module("melband_architecture.bs_roformer").BSRoformer
+
+
+@pytest.fixture(scope="session")
 def nodes_module(tmp_path_factory):
     """Import nodes.py with the small subset of ComfyUI APIs it needs."""
     model_dir = tmp_path_factory.mktemp("models")
@@ -59,9 +68,9 @@ def nodes_module(tmp_path_factory):
     bundled_model.MelBandRoformer = type("MelBandRoformer", (), {})
     sys.modules["melband_plugin.model.mel_band_roformer"] = bundled_model
 
-    bs_package = types.ModuleType("bs_roformer")
+    bs_package = types.ModuleType("melband_plugin.model.bs_roformer")
     bs_package.BSRoformer = type("BSRoformer", (), {})
-    sys.modules["bs_roformer"] = bs_package
+    sys.modules[bs_package.__name__] = bs_package
 
     spec = importlib.util.spec_from_file_location("melband_plugin.nodes", ROOT / "nodes.py")
     module = importlib.util.module_from_spec(spec)
