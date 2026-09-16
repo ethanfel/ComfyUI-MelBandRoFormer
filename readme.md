@@ -1,8 +1,8 @@
 # ComfyUI-MelBandRoFormer
 
-ComfyUI nodes for **Mel-Band RoFormer** and **BS-RoFormer** — state-of-the-art audio source separation models. Split audio into vocals and instruments, remove reverb, denoise recordings, isolate breath sounds, and more.
+ComfyUI nodes for **Mel-Band RoFormer**, **BS-RoFormer**, and **Demucs** audio source separation. Split audio into vocals, drums, bass, and other instruments, remove reverb, denoise recordings, isolate breath sounds, and more.
 
-Both architectures are supported from a single loader node — the checkpoint is automatically detected.
+All three architectures work with the existing model loaders and samplers. RoFormer checkpoint architectures are automatically detected.
 
 Based on the papers:
 - [Mel-Band RoFormer for Music Source Separation](https://arxiv.org/abs/2310.01809) (Lu et al., 2023)
@@ -24,10 +24,10 @@ git clone https://github.com/ethanfel/ComfyUI-MelBandRoFormer
 pip install -r ComfyUI-MelBandRoFormer/requirements.txt
 ```
 
-Dependencies specify minimum versions without exact pins or upper bounds. Both model architectures are bundled, so the node does not require the `BS-RoFormer` package.
+Dependencies specify minimum versions without exact pins or upper bounds. Both RoFormer architectures are bundled, so the node does not require the `BS-RoFormer` package. Demucs uses `demucs>=4.1`; after updating this node, rerun the requirements installation in your ComfyUI Python environment.
 
 ### Models
-Models are stored in `ComfyUI/models/MelBandRoFormer/` (created automatically on first run).
+RoFormer models are stored in `ComfyUI/models/MelBandRoFormer/` (created automatically on first run). Demucs uses the standard Hugging Face cache, which can be configured with `HF_HOME`.
 
 **You don't need to download anything manually.** Registry entries download automatically from HuggingFace the first time you run them, then load from disk on subsequent runs.
 
@@ -51,6 +51,7 @@ To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file 
 | Isolate breath / mouth sounds | **Aspiration · Sucial ⭐** |
 | Separate vocals + drums + bass + other | **4-stem large · Aname-Tommy** |
 | Isolate drums / percussion | **4-stem large · Aname-Tommy** → `stem_1` |
+| Compare drum separation using Demucs | **[Demucs] htdemucs_ft · 4-stem [stem_1=drums]** → `stem_1` |
 | Low VRAM / fast preview | **Vocals · Kim fp16** |
 | Highest possible quality, have lots of VRAM | **Vocals big beta6 (dim=512) · pcunwa** |
 
@@ -76,11 +77,11 @@ Full loader — every model in the registry, including older versions. Use this 
 |---|---|
 | `model_name` | Local files first, then all registry entries. |
 
-Both loaders automatically detect whether the checkpoint is **Mel-Band RoFormer** or **BS-RoFormer** and instantiate the correct architecture. No configuration needed. **Output:** `MELROFORMERMODEL` — connect to the Sampler.
+Both loaders automatically detect whether a RoFormer checkpoint is **Mel-Band RoFormer** or **BS-RoFormer**. Selecting the **Demucs htdemucs_ft** entry loads its pretrained ensemble. No architecture configuration needed. **Output:** `MELROFORMERMODEL` — connect to the Sampler.
 
 #### Security note
 
-Most models use the `.ckpt` extension. The loader forces ComfyUI's weights-only safe-loading path, so registry checkpoints are read as tensor state dictionaries without allowing arbitrary pickle objects.
+Most RoFormer models use the `.ckpt` extension. The loader forces ComfyUI's weights-only safe-loading path, so those registry checkpoints are read as tensor state dictionaries without allowing arbitrary pickle objects. Demucs loads the author's Hugging Face safetensors weights directly.
 
 ---
 
@@ -102,7 +103,7 @@ Runs the separation and returns two audio streams.
 | `stem_1` | The primary separated audio (e.g. vocals for a vocal model, dry signal for a dereverb model). |
 | `stem_2` | The residual (original minus stem_1) for single-stem models, or the second stem for two-stem models (karaoke, aspiration). |
 
-For Aname-Tommy four-stem models, use **Mel-Band RoFormer Sampler (4-stem)** to receive drums, bass, other instruments, and vocals, in that order. The regular sampler exposes only the first two outputs: drums and bass.
+For Aname-Tommy or Demucs four-stem models, use **Mel-Band RoFormer Sampler (4-stem)** to receive drums, bass, other instruments, and vocals, in that order. The regular sampler exposes only the first two outputs: drums and bass.
 
 Both sampler nodes preserve ComfyUI's `AUDIO` batch dimension. The `batch_size` control is separate: it sets how many overlapping inference chunks are processed together.
 
@@ -245,6 +246,16 @@ MelBandRoFormer's mel-band scheme has limited low-frequency resolution, so bass 
 
 ---
 
+### Demucs drum and four-stem separation
+
+Select **[Demucs] htdemucs_ft · 4-stem [stem_1=drums]** in either loader and connect it to **Mel-Band RoFormer Sampler (4-stem)**. The outputs are `stem_1` = drums, `stem_2` = bass, `stem_3` = other instruments, and `stem_4` = vocals. Leave `intensity` at **1.0** for isolated stems.
+
+The first load downloads about **336 MB** of official safetensors weights into the Hugging Face cache. Subsequent loads reuse those files. This is the fine-tuned four-model ensemble, so each chunk runs through four models.
+
+The loader's `recommended_chunk_size` output gives the model's maximum segment length (currently **7.8 seconds**). Both samplers automatically cap longer chunks at that limit. Their overlap, fade, batch size, and intensity controls continue to work; audio is normalized before chunking and restored to its original level and sample rate afterward. [Official Demucs documentation](https://github.com/adefossez/demucs), [model weights](https://huggingface.co/adefossez/HTDemucs-ft).
+
+---
+
 ### Dereverb / Echo Removal
 
 Remove room reverb and echo from recordings. Useful for cleaning up vocal takes, speech recordings, and field recordings.
@@ -336,6 +347,7 @@ You can connect the output of one Sampler into a second Sampler for two-stage pr
 - **[Kijai](https://huggingface.co/Kijai/MelBandRoFormer_comfy)** — ComfyUI-optimized safetensors (fp16/fp32)
 - **[ZFTurbo](https://github.com/ZFTurbo/Music-Source-Separation-Training)** — training framework used by most models in this registry
 - **[lucidrains/BS-RoFormer](https://github.com/lucidrains/BS-RoFormer)** — the bundled BS-RoFormer inference implementation is adapted from version 0.4.1 (MIT license) for checkpoint compatibility
+- **[Demucs / Alexandre Défossez](https://github.com/adefossez/demucs)** — Hybrid Transformer Demucs and the `htdemucs_ft` pretrained ensemble
 
 ### Model Authors
 | Author | Models |

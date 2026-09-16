@@ -9,6 +9,7 @@ import folder_paths
 
 from .model.mel_band_roformer import MelBandRoformer
 from .model.bs_roformer import BSRoformer
+from .model.demucs_adapter import DEMUCS_MODELS, DemucsModel, load_demucs_model
 
 script_directory = os.path.dirname(os.path.abspath(__file__))
 
@@ -237,11 +238,11 @@ def _latest_hf_model_choices():
 
 
 def _all_model_choices():
-    return _manual_local_choices() + _hf_model_choices()
+    return _manual_local_choices() + _hf_model_choices() + list(DEMUCS_MODELS)
 
 
 def _latest_model_choices():
-    return _manual_local_choices() + _latest_hf_model_choices()
+    return _manual_local_choices() + _latest_hf_model_choices() + list(DEMUCS_MODELS)
 
 
 def _detect_model_type(sd):
@@ -389,6 +390,13 @@ def get_windowing_array(window_size, fade_size, device):
     return window.to(device)
 
 
+def _model_chunk_size(model, requested):
+    limit = getattr(model, "max_chunk_size", requested)
+    if requested > limit:
+        print(f"[MelBandRoFormer] Limiting chunk_size to {limit:g}s for this model.")
+    return min(requested, limit)
+
+
 def _concat_audio_batch(items):
     """Combine single-item ComfyUI AUDIO dictionaries into one AUDIO batch."""
     if not items:
@@ -440,6 +448,9 @@ class MelBandRoFormerModelLoader:
 
     def loadmodel(self, model_name):
         model_name = _MODEL_NAME_ALIASES.get(model_name, model_name)
+        if model_name in DEMUCS_MODELS:
+            model = load_demucs_model(DEMUCS_MODELS[model_name])
+            return (model, model.max_chunk_size)
         if model_name in MODEL_REGISTRY:
             repo_id, filename = MODEL_REGISTRY[model_name]
             model_path = download_hf_model(repo_id, filename)
@@ -535,7 +546,7 @@ class MelBandRoFormerSampler:
             )
 
         B, audio_channels, audio_length = audio_input.shape
-        sr = 44100
+        sr = getattr(model, "samplerate", 44100)
 
         expects_stereo = getattr(model, "stereo", True)
         if expects_stereo and audio_channels == 1:
@@ -556,7 +567,11 @@ class MelBandRoFormerSampler:
         audio_input = original_audio = audio_input[0]  # [channels, time]
         audio_length = audio_input.shape[1]            # use resampled length for border logic
 
-        C = int(chunk_size * sr)
+        normalization = None
+        if isinstance(model, DemucsModel):
+            audio_input, normalization = model.normalize_audio(audio_input)
+
+        C = int(_model_chunk_size(model, chunk_size) * sr)
         step = C // overlap
         fade_samples = max(1, int(C * fade_size))
         border = C - step
@@ -567,7 +582,7 @@ class MelBandRoFormerSampler:
         windowing_array = get_windowing_array(C, fade_samples, device)
 
         audio_input = audio_input.to(device)
-        num_stems = len(model.mask_estimators)
+        num_stems = model.num_stems if isinstance(model, DemucsModel) else len(model.mask_estimators)
         total_length = audio_input.shape[1]
         chunk_starts = list(range(0, total_length, step))
         num_chunks = len(chunk_starts)
@@ -620,6 +635,9 @@ class MelBandRoFormerSampler:
 
         if audio_length > 2 * border and border > 0:
             estimated = estimated[..., border:-border]
+
+        if normalization is not None:
+            estimated = model.denormalize_audio(estimated, normalization)
 
         stem1 = estimated[0]
         if num_stems >= 2:
@@ -891,13 +909,13 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
     RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "AUDIO")
     RETURN_NAMES = ("stem_1", "stem_2", "stem_3", "stem_4")
     RETURN_TOOLTIPS = (
-        "First model stem. Aname-Tommy 4-stem: drums / percussion.",
-        "Second model stem. Aname-Tommy 4-stem: bass.",
-        "Third model stem. Aname-Tommy 4-stem: other instruments.",
-        "Fourth model stem. Aname-Tommy 4-stem: vocals.",
+        "First model stem. Aname-Tommy / Demucs 4-stem: drums / percussion.",
+        "Second model stem. Aname-Tommy / Demucs 4-stem: bass.",
+        "Third model stem. Aname-Tommy / Demucs 4-stem: other instruments.",
+        "Fourth model stem. Aname-Tommy / Demucs 4-stem: vocals.",
     )
     DESCRIPTION = (
-        "Separates all four stems. With Aname-Tommy large/XL, the output order is "
+        "Separates all four stems. With Aname-Tommy large/XL or Demucs, the output order is "
         "drums, bass, other instruments, vocals. Use stem_1 for isolated drums."
     )
     FUNCTION = "process4"
@@ -951,7 +969,7 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
             ]
 
         B, audio_channels, audio_length = audio_input.shape
-        sr = 44100
+        sr = getattr(model, "samplerate", 44100)
 
         expects_stereo = getattr(model, "stereo", True)
         if expects_stereo and audio_channels == 1:
@@ -969,7 +987,11 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
         audio_input = original_audio = audio_input[0]
         audio_length = audio_input.shape[1]
 
-        C = int(chunk_size * sr)
+        normalization = None
+        if isinstance(model, DemucsModel):
+            audio_input, normalization = model.normalize_audio(audio_input)
+
+        C = int(_model_chunk_size(model, chunk_size) * sr)
         step = C // overlap
         fade_samples = max(1, int(C * fade_size))
         border = C - step
@@ -979,7 +1001,7 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
 
         windowing_array = get_windowing_array(C, fade_samples, device)
         audio_input = audio_input.to(device)
-        num_stems = len(model.mask_estimators)
+        num_stems = model.num_stems if isinstance(model, DemucsModel) else len(model.mask_estimators)
         total_length = audio_input.shape[1]
         chunk_starts = list(range(0, total_length, step))
         num_chunks = len(chunk_starts)
@@ -1026,6 +1048,9 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
 
         if audio_length > 2 * border and border > 0:
             estimated = estimated[..., border:-border]
+
+        if normalization is not None:
+            estimated = model.denormalize_audio(estimated, normalization)
 
         if num_stems == 1:
             stem1 = estimated[0]

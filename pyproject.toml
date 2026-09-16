@@ -1,6 +1,6 @@
 [project]
 name = "ComfyUI-MelBandRoFormer"
-description = "ComfyUI nodes for Mel-Band RoFormer and BS-RoFormer audio source separation — vocals, instruments, dereverb, denoise, and more"
+description = "ComfyUI nodes for Mel-Band RoFormer, BS-RoFormer, and Demucs audio source separation — vocals, drums, instruments, dereverb, denoise, and more"
 version = "1.1.0"
 license = "Apache-2.0"
 dependencies = [
@@ -10,6 +10,7 @@ dependencies = [
     "pyloudnorm>=0.2",
     "soundfile>=0.13",
     "matplotlib>=3.8",
+    "demucs>=4.1",
 ]
 
 [project.urls]

@@ -4,3 +4,4 @@ huggingface-hub>=0.34
 pyloudnorm>=0.2
 soundfile>=0.13
 matplotlib>=3.8
+demucs>=4.1
