@@ -11,12 +11,22 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="session")
-def bs_model_class():
+def architecture_package():
     """Import the real architecture separately from the node API test stubs."""
     package = types.ModuleType("melband_architecture")
     package.__path__ = [str(ROOT / "model")]
     sys.modules[package.__name__] = package
-    return importlib.import_module("melband_architecture.bs_roformer").BSRoformer
+    return package.__name__
+
+
+@pytest.fixture(scope="session")
+def bs_model_class(architecture_package):
+    return importlib.import_module(f"{architecture_package}.bs_roformer").BSRoformer
+
+
+@pytest.fixture(scope="session")
+def mel_model_class(architecture_package):
+    return importlib.import_module(f"{architecture_package}.mel_band_roformer").MelBandRoformer
 
 
 @pytest.fixture(scope="session")

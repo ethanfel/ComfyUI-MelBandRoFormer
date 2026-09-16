@@ -50,6 +50,7 @@ To use a model you downloaded yourself, drop the `.ckpt` or `.safetensors` file 
 | Denoise a recording | **Denoise · aufr33 ⭐** |
 | Isolate breath / mouth sounds | **Aspiration · Sucial ⭐** |
 | Separate vocals + drums + bass + other | **4-stem large · Aname-Tommy** |
+| Isolate drums / percussion | **4-stem large · Aname-Tommy** → `stem_1` |
 | Low VRAM / fast preview | **Vocals · Kim fp16** |
 | Highest possible quality, have lots of VRAM | **Vocals big beta6 (dim=512) · pcunwa** |
 
@@ -101,7 +102,7 @@ Runs the separation and returns two audio streams.
 | `stem_1` | The primary separated audio (e.g. vocals for a vocal model, dry signal for a dereverb model). |
 | `stem_2` | The residual (original minus stem_1) for single-stem models, or the second stem for two-stem models (karaoke, aspiration). |
 
-For four-stem models, use **Mel-Band RoFormer Sampler (4-stem)** to receive vocals, drums, bass, and other. The regular sampler intentionally exposes only its first two outputs.
+For Aname-Tommy four-stem models, use **Mel-Band RoFormer Sampler (4-stem)** to receive drums, bass, other instruments, and vocals, in that order. The regular sampler exposes only the first two outputs: drums and bass.
 
 Both sampler nodes preserve ComfyUI's `AUDIO` batch dimension. The `batch_size` control is separate: it sets how many overlapping inference chunks are processed together.
 
@@ -220,9 +221,20 @@ Models that output both vocals and instrumental simultaneously rather than compu
 
 ### 4-Stem Separation
 
-Separates audio into vocals, drums, bass, and other simultaneously.
+Separates audio into drums, bass, other instruments, and vocals simultaneously.
 
-Use **Mel-Band RoFormer Sampler (4-stem)** for all four outputs. Output order is vocals, drums, bass, other for these checkpoints.
+Use **Mel-Band RoFormer Sampler (4-stem)** for all four outputs. For both Aname-Tommy checkpoints:
+
+| Output | Audio |
+|---|---|
+| `stem_1` | Drums / percussion |
+| `stem_2` | Bass |
+| `stem_3` | Other instruments |
+| `stem_4` | Vocals |
+
+To extract drum audio, select **4-stem large · Aname-Tommy [stem_1=drums]** in either model loader, connect it and your audio to the four-stem sampler, and connect `stem_1` to Preview Audio or Save Audio. Leave `intensity` at **1.0** for full separation; lower values blend the original mix back in.
+
+The loader applies the models' 4096-point FFT, 882-sample hop, and transformer skip connections automatically, including when selecting the original checkpoint filenames locally. Saved workflows using the old `[stem_1=vox only]` names still load; that label was incorrect. Stem order follows the author's [large](https://huggingface.co/Aname-Tommy/melbandroformer4stems/blob/main/config_large.yaml) and [XL](https://huggingface.co/Aname-Tommy/melbandroformer4stems/blob/main/config_xl.yaml) configurations.
 
 | Model | Size | Notes | Quality |
 |---|---|---|---|

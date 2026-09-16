@@ -90,9 +90,9 @@ MODEL_REGISTRY = {
     "Vocals fullness · Aname-Tommy":                 ("Aname-Tommy/MelBandRoformers",                     "FullnessVocalModel.ckpt"),
     # ── Vocals + Instrumental 2-stem ────────────────────────────────────────
     "Vocals+Instrumental 2-stem · becruily":         ("becruily/mel-band-roformer-deux",                  "becruily_deux.ckpt"),
-    # ── 4-stem (vocals, drums, bass, other) ─────────────────────────────────
-    "4-stem large · Aname-Tommy [stem_1=vox only]":  ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_large_ver1.ckpt"),
-    "4-stem XL · Aname-Tommy [stem_1=vox only]":     ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_xl_ver1.ckpt"),
+    # ── 4-stem (drums, bass, other, vocals) ─────────────────────────────────
+    "4-stem large · Aname-Tommy [stem_1=drums]":     ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_large_ver1.ckpt"),
+    "4-stem XL · Aname-Tommy [stem_1=drums]":        ("Aname-Tommy/melbandroformer4stems",                "mel_band_roformer_4stems_xl_ver1.ckpt"),
     # ── Dereverb / Echo removal ─────────────────────────────────────────────
     "Dereverb · anvuew ⭐ (SDR 19.17)":              ("anvuew/dereverb_mel_band_roformer",                "dereverb_mel_band_roformer_anvuew_sdr_19.1729.ckpt"),
     "Dereverb less-aggressive · anvuew (SDR 18.80)": ("anvuew/dereverb_mel_band_roformer",                "dereverb_mel_band_roformer_less_aggressive_anvuew_sdr_18.8050.ckpt"),
@@ -117,11 +117,35 @@ MODEL_REGISTRY = {
 }
 
 
-# Architecture values that cannot be recovered from tensor shapes alone.
+# Accept the old, incorrectly labelled choices in saved workflows.
+_MODEL_NAME_ALIASES = {
+    f"4-stem {size} · Aname-Tommy [stem_1=vox only]":
+        f"4-stem {size} · Aname-Tommy [stem_1=drums]"
+    for size in ("large", "XL")
+}
+
+# Published config_large.yaml and config_xl.yaml in the model's HF repository.
+# These values cannot all be recovered from checkpoint tensor shapes.
+_ANAME_FOUR_STEM_CONFIG = {
+    "dim_freqs_in": 2049,
+    "stft_n_fft": 4096,
+    "stft_hop_length": 882,
+    "stft_win_length": 4096,
+    "skip_connection": True,
+}
+
 _MODEL_CONFIG_OVERRIDES = {
     "[BS] Vocals revive v3e ⭐ · pcunwa": {"stft_hop_length": 441},
     "[BS] Vocals revive v2 · pcunwa": {"stft_hop_length": 441},
     "[BS] Vocals revive v1 · pcunwa": {"stft_hop_length": 441},
+    "4-stem large · Aname-Tommy [stem_1=drums]": _ANAME_FOUR_STEM_CONFIG,
+    "4-stem XL · Aname-Tommy [stem_1=drums]": _ANAME_FOUR_STEM_CONFIG,
+}
+
+# Apply the same settings when a known checkpoint is selected by local filename.
+_MODEL_CONFIG_OVERRIDES_BY_FILENAME = {
+    os.path.basename(MODEL_REGISTRY[name][1]): config
+    for name, config in _MODEL_CONFIG_OVERRIDES.items()
 }
 
 # Latest/best model from each series — shown in the curated loader node.
@@ -150,8 +174,8 @@ _LATEST_MODEL_NAMES = frozenset({
     # 2-stem direct
     "Vocals+Instrumental 2-stem · becruily",
     # 4-stem
-    "4-stem large · Aname-Tommy [stem_1=vox only]",
-    "4-stem XL · Aname-Tommy [stem_1=vox only]",
+    "4-stem large · Aname-Tommy [stem_1=drums]",
+    "4-stem XL · Aname-Tommy [stem_1=drums]",
     # Dereverb
     "[BS] Dereverb · anvuew ⭐ (SDR 22.51)",
     "Dereverb · anvuew ⭐ (SDR 19.17)",
@@ -384,6 +408,16 @@ def _concat_audio_batch(items):
 
 class MelBandRoFormerModelLoader:
     @classmethod
+    def VALIDATE_INPUTS(cls, model_name):
+        model_name = _MODEL_NAME_ALIASES.get(model_name, model_name)
+        if model_name in cls.INPUT_TYPES()["required"]["model_name"][0]:
+            return True
+        if (os.path.basename(model_name) in _MODEL_CONFIG_OVERRIDES_BY_FILENAME
+                and model_name in folder_paths.get_filename_list("MelBandRoFormer")):
+            return True
+        return f"Unknown model: {model_name}"
+
+    @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
@@ -405,6 +439,7 @@ class MelBandRoFormerModelLoader:
     CATEGORY = "Mel-Band RoFormer"
 
     def loadmodel(self, model_name):
+        model_name = _MODEL_NAME_ALIASES.get(model_name, model_name)
         if model_name in MODEL_REGISTRY:
             repo_id, filename = MODEL_REGISTRY[model_name]
             model_path = download_hf_model(repo_id, filename)
@@ -415,7 +450,10 @@ class MelBandRoFormerModelLoader:
         # weights-only loading so .ckpt files are never unpickled unsafely.
         sd = load_torch_file(model_path, safe_load=True)
         model_type, config = infer_config(sd)
-        config.update(_MODEL_CONFIG_OVERRIDES.get(model_name, {}))
+        config.update(_MODEL_CONFIG_OVERRIDES.get(
+            model_name,
+            _MODEL_CONFIG_OVERRIDES_BY_FILENAME.get(os.path.basename(model_path), {}),
+        ))
         print(f"[MelBandRoFormer] Detected {model_type}: dim={config['dim']}, depth={config['depth']}, "
               f"num_stems={config['num_stems']}, time_depth={config['time_transformer_depth']}, "
               f"freq_depth={config['freq_transformer_depth']}")
@@ -852,6 +890,16 @@ class MelBandRoFormerSampler4Stem(MelBandRoFormerSampler):
 
     RETURN_TYPES = ("AUDIO", "AUDIO", "AUDIO", "AUDIO")
     RETURN_NAMES = ("stem_1", "stem_2", "stem_3", "stem_4")
+    RETURN_TOOLTIPS = (
+        "First model stem. Aname-Tommy 4-stem: drums / percussion.",
+        "Second model stem. Aname-Tommy 4-stem: bass.",
+        "Third model stem. Aname-Tommy 4-stem: other instruments.",
+        "Fourth model stem. Aname-Tommy 4-stem: vocals.",
+    )
+    DESCRIPTION = (
+        "Separates all four stems. With Aname-Tommy large/XL, the output order is "
+        "drums, bass, other instruments, vocals. Use stem_1 for isolated drums."
+    )
     FUNCTION = "process4"
     CATEGORY = "Mel-Band RoFormer"
 

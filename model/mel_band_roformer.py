@@ -278,12 +278,14 @@ class MelBandRoformer(Module):
             multi_stft_normalized=False,
             multi_stft_window_fn = torch.hann_window,
             match_input_audio_length=False,  # if True, pad output tensor to match length of input tensor
+            skip_connection=False,
     ):
         super().__init__()
 
         self.stereo = stereo
         self.audio_channels = 2 if stereo else 1
         self.num_stems = num_stems
+        self.skip_connection = skip_connection
 
         self.layers = ModuleList([])
 
@@ -447,7 +449,13 @@ class MelBandRoformer(Module):
 
         # axial / hierarchical attention
 
+        previous_outputs = []
         for time_transformer, freq_transformer in self.layers:
+            if self.skip_connection:
+                # MSST's dense skips add every earlier axial block output.
+                for previous in previous_outputs:
+                    x = x + previous
+
             x = rearrange(x, 'b t f d -> b f t d')
             x, ps = pack([x], '* t d')
 
@@ -460,6 +468,9 @@ class MelBandRoformer(Module):
             x = freq_transformer(x)
 
             x, = unpack(x, ps, '* f d')
+
+            if self.skip_connection:
+                previous_outputs.append(x)
 
         num_stems = len(self.mask_estimators)
 
