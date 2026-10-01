@@ -149,6 +149,15 @@ _MODEL_CONFIG_OVERRIDES_BY_FILENAME = {
     for name, config in _MODEL_CONFIG_OVERRIDES.items()
 }
 
+# viperx BS-RoFormer ep_317: the checkpoint's own yaml specifies stft_hop_length: 441, but the
+# shape-inferred default (512) separates quietly wrong (lower correlation with the reference
+# output and noticeably more instrumental leakage into the vocals).
+for _ep317_ckpt in (
+    "model_bs_roformer_ep_317_sdr_12.9755.safetensors",
+    "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+):
+    _MODEL_CONFIG_OVERRIDES_BY_FILENAME[_ep317_ckpt] = {"stft_hop_length": 441}
+
 # Latest/best model from each series — shown in the curated loader node.
 # Older versions that are superseded are excluded (Kim FT v1, GaboxR67 fv6, etc.)
 _LATEST_MODEL_NAMES = frozenset({
@@ -1157,6 +1166,45 @@ class MelBandRoFormerLUFSNormalize:
         return (out, round(reported_input, 2), round(reported_gain, 2))
 
 
+# Pure-torch peak normalisation (no pyloudnorm dependency).
+def _peak_normalize(waveform, target_peak):
+    """Scale each batch item of [B, C, T] so its absolute peak equals target_peak; silent items untouched."""
+    out = []
+    for wav in waveform:
+        peak = wav.abs().max().item()
+        out.append(wav if peak == 0.0 else wav * (target_peak / peak))
+    return torch.stack(out, dim=0)
+
+
+class MelBandRoFormerPeakNormalize:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "audio": ("AUDIO",),
+                "target_peak": ("FLOAT", {
+                    "default": 0.9, "min": 0.01, "max": 1.0, "step": 0.01,
+                    "tooltip": "Scale each batch item so its absolute peak equals target_peak (0.9 = what audio-separator does). Silent items are left untouched.",
+                }),
+            },
+        }
+
+    RETURN_TYPES = ("AUDIO",)
+    RETURN_NAMES = ("audio",)
+    FUNCTION = "normalize"
+    CATEGORY = "Mel-Band RoFormer"
+
+    def normalize(self, audio, target_peak=0.9):
+        waveform = audio["waveform"]   # [B, C, T]
+        if waveform.ndim != 3 or waveform.shape[0] == 0:
+            raise ValueError(
+                "ComfyUI AUDIO waveform must have non-empty shape [batch, channels, samples], "
+                f"got {tuple(waveform.shape)}"
+            )
+        out = {"waveform": _peak_normalize(waveform.float(), target_peak), "sample_rate": audio["sample_rate"]}
+        return (out,)
+
+
 FOLEYTUNE_AUDIO_DATASET = "FOLEYTUNE_AUDIO_DATASET"
 _AUDIO_EXTS = {".wav", ".flac", ".mp3", ".ogg", ".aac", ".m4a", ".aiff", ".aif"}
 _SOUNDFILE_EXTS = {".wav", ".flac", ".ogg"}
@@ -1442,6 +1490,7 @@ NODE_CLASS_MAPPINGS = {
     "MelBandRoFormerSampler": MelBandRoFormerSampler,
     "MelBandRoFormerSampler4Stem": MelBandRoFormerSampler4Stem,
     "MelBandRoFormerLUFSNormalize": MelBandRoFormerLUFSNormalize,
+    "MelBandRoFormerPeakNormalize": MelBandRoFormerPeakNormalize,
     "MelBandRoFormerSpectrogram": MelBandRoFormerSpectrogram,
     "MelBandRoFormerDatasetSampler": MelBandRoFormerDatasetSampler,
     "MelBandRoFormerFolderLoader": MelBandRoFormerFolderLoader,
@@ -1454,6 +1503,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "MelBandRoFormerSampler": "Mel-Band RoFormer Sampler",
     "MelBandRoFormerSampler4Stem": "Mel-Band RoFormer Sampler (4-stem)",
     "MelBandRoFormerLUFSNormalize": "Mel-Band RoFormer LUFS Normalize",
+    "MelBandRoFormerPeakNormalize": "Mel-Band RoFormer Peak Normalize",
     "MelBandRoFormerSpectrogram": "Mel-Band RoFormer Spectrogram",
     "MelBandRoFormerDatasetSampler": "Mel-Band RoFormer Dataset Sampler",
     "MelBandRoFormerFolderLoader": "Mel-Band RoFormer Folder Loader",
